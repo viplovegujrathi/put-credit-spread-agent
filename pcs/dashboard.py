@@ -33,8 +33,9 @@ border-radius:0 6px 6px 0;margin:14px 0;color:#d7dce3;font-size:13px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
 .card .k{color:var(--dim);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
 .card .v{font-size:21px;margin-top:5px;font-variant-numeric:tabular-nums}
-table{width:100%;border-collapse:collapse;background:var(--panel);
-border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;min-width:760px;border-collapse:collapse;background:var(--panel);
+border:1px solid var(--line);border-radius:8px}
 th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
 color:var(--dim);padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600}
 td{padding:10px 12px;border-bottom:1px solid #1e232a;font-variant-numeric:tabular-nums}
@@ -84,9 +85,10 @@ def _positions_table(rows: list[Position]) -> str:
             + (f"<div class='note'>{_e(note)}</div>" if note else "")
             + "</td></tr>")
     return (
-        "<table><tr><th>id</th><th>ticker</th><th>spread</th><th>expiration</th>"
-        "<th>qty</th><th>credit</th><th>collateral</th><th>cost to close</th>"
-        "<th>P&amp;L</th><th>% of max credit</th></tr>" + "".join(body) + "</table>")
+        '<div class="scroll"><table><tr><th>id</th><th>ticker</th><th>spread</th>'
+        "<th>expiration</th><th>qty</th><th>credit</th><th>collateral</th>"
+        "<th>cost to close</th><th>P&amp;L</th><th>% of max credit</th></tr>"
+        + "".join(body) + "</table></div>")
 
 
 def _closed_table(rows: list[Position]) -> str:
@@ -98,9 +100,9 @@ def _closed_table(rows: list[Position]) -> str:
         f"<td>${p.credit_dollars:,.0f}</td><td>${p.close_debit * 100 * p.contracts:,.0f}</td>"
         f"<td>{_sign(p.realized_pl)}</td><td class='dim'>{_e(p.close_reason)}</td></tr>"
         for p in sorted(rows, key=lambda x: x.closed_at, reverse=True))
-    return ("<table><tr><th>id</th><th>ticker</th><th>spread</th><th>expiration</th>"
-            "<th>credit</th><th>debit</th><th>realized</th><th>outcome</th></tr>"
-            + body + "</table>")
+    return ('<div class="scroll"><table><tr><th>id</th><th>ticker</th><th>spread</th>'
+            "<th>expiration</th><th>credit</th><th>debit</th><th>realized</th>"
+            "<th>outcome</th></tr>" + body + "</table></div>")
 
 
 def _proposals_table(props: list[Proposal]) -> str:
@@ -126,9 +128,10 @@ def _proposals_table(props: list[Proposal]) -> str:
             f"<td>{s['cushion']:.1%}</td>"
             f"<td>{'-' if s['pop_est'] is None else format(s['pop_est'], '.0%')}</td>"
             f"<td>{tag}{notes}</td></tr>")
-    return ("<table><tr><th>proposal</th><th>ticker</th><th>spread</th><th>expiration</th>"
-            "<th>credit</th><th>collateral</th><th>ROC</th><th>cushion</th><th>POP</th>"
-            "<th>status</th></tr>" + "".join(body) + "</table>")
+    return ('<div class="scroll"><table><tr><th>proposal</th><th>ticker</th>'
+            "<th>spread</th><th>expiration</th><th>credit</th><th>collateral</th>"
+            "<th>ROC</th><th>cushion</th><th>POP</th><th>status</th></tr>"
+            + "".join(body) + "</table></div>")
 
 
 def render(led: Ledger, props: list[Proposal], settings: Settings,
