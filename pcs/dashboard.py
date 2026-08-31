@@ -196,6 +196,9 @@ ${STRATEGY.max_collateral_per_trade:,.0f}. Skip the name rather than moving the
 strike to the money.</li>
 <li><b>Expiration:</b> ~{STRATEGY.target_dte} DTE on a real listed Friday, confirmed
 against the live chain. No earnings inside the window.</li>
+<li><b>Opening range:</b> no position is opened in the first
+{settings.opening_settle_minutes} minutes after the bell &mdash; paper included.
+The opening book is the widest and thinnest of the day.</li>
 <li><b>Exit:</b> take profit at {STRATEGY.take_profit_band[0]:.0%}&ndash;
 {STRATEGY.take_profit_band[1]:.0%} of max credit. If the short strike is tested,
 roll down-and-out or accept the defined loss &mdash; never remove the long leg.</li>

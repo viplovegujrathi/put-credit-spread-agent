@@ -123,6 +123,11 @@ class Settings:
     commission_per_contract: float = 0.0     # Robinhood: $0 on equity options
     per_contract_fees: float = 0.06          # ~ORF/OCC pass-through per contract leg
 
+    # --- timing -----------------------------------------------------------
+    # Wait this many minutes after the 09:30 ET bell before opening anything,
+    # paper included. Enforced as a hard gate in paper_broker.open_approved.
+    opening_settle_minutes: int = 30
+
     # --- earnings ---------------------------------------------------------
     earnings_buffer_days: int = 2        # exclude if earnings <= expiry + buffer
 

@@ -79,6 +79,14 @@ times a year).
 chain. Not every S&P name lists weeklies, so each symbol resolves its own —
 skip a name with no listing in the window rather than dragging it off target.
 
+### 3a. Never open in the first 30 minutes
+No position is opened inside the **opening range** — the first 30 minutes after
+the 09:30 ET bell — and this applies to paper trades as well as live ones. The
+opening book is the widest and thinnest of the day, so a fill taken there is not
+one the live account could count on, and a paper record built on such fills
+overstates the strategy. Screening and proposing during that window are fine;
+only opening waits. Enforced as a hard gate in `paper_broker.open_approved`.
+
 ### 4. Sizing — bull put credit spread only
 Sell a put a few percent OTM; buy a lower strike, same expiration.
 
@@ -151,3 +159,4 @@ Before presenting results, check:
       honestly — including which source and how fresh the quotes are.
 - [ ] The natural (worst-case) credit is shown next to the sizing credit.
 - [ ] No trade was described as placed or executed — only proposed.
+- [ ] Nothing was opened inside the 30-minute opening range.

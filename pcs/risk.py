@@ -37,7 +37,8 @@ class PortfolioView:
 
 
 def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
-          pending: list[tuple[str, str, float]] | None = None) -> RiskVerdict:
+          pending: list[tuple[str, str, float]] | None = None,
+          sess=None) -> RiskVerdict:
     """`pending` = (symbol, sector, collateral) already accepted this run, so a
     single batch cannot blow through a cap by being evaluated one at a time."""
     pending = pending or []
@@ -81,4 +82,6 @@ def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
         warnings.append(f"thin open interest (short {spread.short_oi} / long {spread.long_oi})")
     if spread.quote_quality != "live":
         warnings.append(f"quotes are a {spread.quote_quality.replace('_', ' ')}, not a live market")
+    if sess is not None and not sess.can_open_positions:
+        warnings.append(f"sized {sess.open_block_reason}")
     return RiskVerdict(not reasons, reasons, warnings)

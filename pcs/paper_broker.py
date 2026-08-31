@@ -18,12 +18,15 @@ from .chains import PutChain, get_chain
 from .config import STRATEGY, Settings
 from .ledger import EXPIRED, Ledger, Position, new_id
 from .optimizer import Spread
-from .session import SessionState, slippage_frac
-from .session import state as session_state
+from .session import SessionState, slippage_frac, state_for
 
 
 class ApprovalRequired(RuntimeError):
     """Raised when something tries to open a position without human sign-off."""
+
+
+class MarketNotReady(RuntimeError):
+    """Raised when a position is opened before the session has settled."""
 
 
 PAPER_EXTRA_HAIRCUT = 0.10
@@ -39,7 +42,7 @@ def simulated_fill_credit(spread: Spread, settings: Settings,
     a fixed 0.25 was briefly *less* conservative than a 0.35 stale-quote sizing
     basis, which handed the paper account a fill better than the ticket.
     """
-    sess = sess or session_state()
+    sess = sess or state_for(settings)
     slip = max(settings.paper_slippage_frac, slippage_frac(sess, settings) + PAPER_EXTRA_HAIRCUT)
     mid, nat = spread.credit_mid, spread.credit_nat
     return round(max(min(mid - slip * (mid - nat), spread.credit), nat), 4)
@@ -48,7 +51,13 @@ def simulated_fill_credit(spread: Spread, settings: Settings,
 def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
                   settings: Settings, proposal_id: str, approved_by: str,
                   sess: SessionState | None = None) -> Position:
-    """Open a paper position. Requires an explicit approver -- section 3's gate."""
+    """Open a paper position.
+
+    Two gates, both enforced here rather than left to instructions: an explicit
+    human approver, and a settled session. The opening-range block applies to
+    paper as well as live -- a paper record built on opening-auction fills
+    would overstate what the live account could have achieved.
+    """
     if not approved_by:
         raise ApprovalRequired(
             "no approver recorded; every trade needs explicit per-trade human approval")
@@ -56,6 +65,10 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
         raise ApprovalRequired(
             "this adapter only fills paper trades; live orders must be placed by a "
             "human through the broker after reviewing the ticket")
+
+    sess = sess or state_for(settings)
+    if not sess.can_open_positions:
+        raise MarketNotReady(sess.open_block_reason)
 
     fill = simulated_fill_credit(spread, settings, sess)
     fees = round(spread.fees * contracts, 2)

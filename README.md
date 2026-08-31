@@ -35,6 +35,7 @@ and covered by tests:
 | Short strike | **≥ 3% OTM** — never pulled to the money to hit the number |
 | Expiration | **~32 DTE**, a real listed Friday confirmed against the chain |
 | Earnings inside the window | **excluded** |
+| Opening range | **no position opened in the first 30 min** after the bell — paper included |
 | Take profit | 50–65% of max credit |
 | Short strike tested | roll down-and-out or accept the defined loss — **never remove the long leg** |
 
@@ -89,6 +90,29 @@ python3 tools/rh_ingest.py              # 3. normalise into data/rh_chains/
 ```
 
 ---
+
+## Nothing opens in the first 30 minutes
+
+The opening auction is still clearing, overnight orders are being absorbed, and
+spreads have not converged — the first half hour is the widest, thinnest book
+of the day. `open_approved()` refuses to fill inside it and the proposal stays
+pending:
+
+```
+HELD - inside the opening range - no positions are opened until 10:00 ET
+  (20 min away). The opening book is the widest and thinnest of the day;
+  a fill taken here is not one the live account could count on.
+```
+
+This is a **hard gate in the fill path**, not a warning, and it applies to
+paper too — a paper record built on opening-auction fills would overstate what
+the live account could have achieved. Quotes inside the range are still graded
+`live` (they are genuinely live), so sizing is not penalised as if they were
+stale; only *opening* waits. The window is
+`Settings.opening_settle_minutes` (default 30; set it to 0 to opt out).
+
+Screening and proposing during the opening range are fine — the ticket carries
+a warning saying it was sized there.
 
 ## Quote quality is not constant
 

@@ -164,6 +164,9 @@ def cmd_propose(args, settings: Settings) -> int:
     if clear:
         print(f"\nNothing has been placed. To open one in the paper account:\n"
               f"  ./run.py approve {clear[0]} --approver \"your name\"")
+        if not res.session.can_open_positions:
+            print(f"  (held until {res.session.settle_until:%H:%M} ET - "
+                  f"{res.session.open_block_reason.split(' - ')[0]})")
     dashboard.render(led, props, settings, res.session)
     return 0
 
@@ -187,22 +190,32 @@ def cmd_approve(args, settings: Settings) -> int:
         print("  ! overridden by the approver")
 
     led = ledger_mod.Ledger.load(settings)
+    sess = session.state_for(settings)
     sp = Spread(**p.spread)
     print(proposer.ticket(p))
     print(f"\napprover: {args.approver}")
-    pos = paper_broker.open_approved(led, sp, p.sector, p.contracts, settings,
-                                     proposal_id=p.id, approved_by=args.approver)
+    try:
+        pos = paper_broker.open_approved(led, sp, p.sector, p.contracts, settings,
+                                         proposal_id=p.id, approved_by=args.approver,
+                                         sess=sess)
+    except paper_broker.MarketNotReady as exc:
+        print(f"\nHELD - {exc}")
+        print(f"  {p.id} stays pending. Re-run this same command after "
+              f"{sess.settle_until:%H:%M} ET.")
+        return 1
     p.status, p.approved_by = "approved", args.approver
     p.approved_at = dt.datetime.now().isoformat(timespec="seconds")
     p.position_id = pos.id
     proposer.save(props)
     led.save()
+    haircut = (f"sized at ${sp.credit:.2f}; paper fills take a deliberate haircut"
+               if pos.credit_open < sp.credit else
+               f"capped at the ${sp.credit:.2f} the ticket was sized on")
     print(f"\nPAPER FILL  position {pos.id}")
-    print(f"  filled at ${pos.credit_open:.2f} credit "
-          f"(sized at ${sp.credit:.2f}; paper fills take a deliberate haircut)")
+    print(f"  filled at ${pos.credit_open:.2f} credit ({haircut})")
     print(f"  net credit {_money(pos.credit_dollars)}   collateral {_money(pos.collateral)}")
     print(f"  cash {_money(led.cash)}   buying power {_money(led.buying_power)}")
-    dashboard.render(led, props, settings, session.state())
+    dashboard.render(led, props, settings, session.state_for(settings))
     return 0
 
 
@@ -224,7 +237,7 @@ def cmd_mark(args, settings: Settings) -> int:
     if not led.open_positions:
         print("no open positions to mark.")
         return 0
-    sess = session.state()
+    sess = session.state_for(settings)
     print(f"{BAR}\nMARK  {sess.now_et:%Y-%m-%d %H:%M %Z}   {sess.banner}\n{BAR}")
     syms = sorted({p.symbol for p in led.open_positions})
     spots = marketdata.live_quote(syms) if sess.is_open else {}
@@ -267,7 +280,7 @@ def _print_positions(led) -> None:
 
 def cmd_status(args, settings: Settings) -> int:
     led = ledger_mod.Ledger.load(settings)
-    sess = session.state()
+    sess = session.state_for(settings)
     print(f"{BAR}\n{settings.account_label} [{led.mode}]   opened {led.created_at[:10]}")
     print(f"{sess.banner}\n{BAR}")
     _print_positions(led)
@@ -292,13 +305,13 @@ def cmd_close(args, settings: Settings) -> int:
           f"for a ${debit * 100 * pos.contracts:,.0f} debit -> realized "
           f"{_money(pos.realized_pl)} ({pos.close_reason})")
     _print_positions(led)
-    dashboard.render(led, proposer.load(), settings, session.state())
+    dashboard.render(led, proposer.load(), settings, session.state_for(settings))
     return 0
 
 
 def cmd_dashboard(args, settings: Settings) -> int:
     led = ledger_mod.Ledger.load(settings)
-    path = dashboard.render(led, proposer.load(), settings, session.state())
+    path = dashboard.render(led, proposer.load(), settings, session.state_for(settings))
     print(f"wrote {path}")
     return 0
 
