@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Agent state -- account data and market snapshots are local, not source.
+data/ledger.json
+data/proposals.json
+data/settings.json
+data/snapshots.json
+data/last_screen*.json
+data/chain_requests.json
+data/rh_chains/*
+data/rh_raw/*
+!data/rh_raw/README.md
+dashboard.html
+logs/
+
+# The S&P 500 constituent cache IS committed: it is a reproducible input and
+# its as_of date is what makes a past run auditable.
+!data/sp500.csv
+
+.DS_Store

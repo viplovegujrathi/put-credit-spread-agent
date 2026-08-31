@@ -1,0 +1,201 @@
+"""Step 9 -- position logger and paper account state.
+
+One JSON file is the whole book: cash, open positions, closed positions, and
+an append-only event log. Section 3's design principle is that every proposal
+and every outcome stays auditable, so nothing is ever mutated in place without
+an event being written alongside it.
+
+Paper accounting for a short vertical:
+    cash          = starting + credits received - debits paid - fees
+    collateral    = (width x 100 - credit x 100) x contracts, held while open
+    buying power  = cash - collateral held
+    net liq       = cash - cost to close every open spread right now
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import uuid
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+from .config import LEDGER_JSON, Settings
+
+OPEN, CLOSED, EXPIRED = "open", "closed", "expired"
+
+
+@dataclass
+class Position:
+    id: str
+    symbol: str
+    sector: str
+    expiration: str
+    short_strike: float
+    long_strike: float
+    width: float
+    contracts: int
+    credit_open: float          # per share, per contract
+    credit_dollars: float       # total received, all contracts, net of fees
+    collateral: float           # total held, all contracts
+    opened_at: str
+    opened_spot: float
+    status: str = OPEN
+    # marks, refreshed by `mark`
+    mark_cost_to_close: float = 0.0   # per share
+    mark_spot: float = 0.0
+    marked_at: str = ""
+    # close-out
+    closed_at: str = ""
+    close_debit: float = 0.0          # per share
+    realized_pl: float = 0.0          # dollars, net of fees
+    close_reason: str = ""
+    fees_paid: float = 0.0
+    proposal_id: str = ""
+    approved_by: str = ""
+    basis: str = "live"
+    source: str = ""
+
+    @property
+    def max_loss(self) -> float:
+        return self.collateral
+
+    @property
+    def dte(self) -> int:
+        return (dt.date.fromisoformat(self.expiration) - dt.date.today()).days
+
+    @property
+    def open_pl(self) -> float:
+        """Unrealized dollars: credit taken in minus what it costs to buy back."""
+        return round((self.credit_open - self.mark_cost_to_close) * 100 * self.contracts, 2)
+
+    @property
+    def pct_of_max_credit(self) -> float:
+        gross = self.credit_open * 100 * self.contracts
+        return round(self.open_pl / gross, 4) if gross else 0.0
+
+    def as_dict(self) -> dict:
+        d = asdict(self)
+        d.update(dte=self.dte, open_pl=self.open_pl,
+                 pct_of_max_credit=self.pct_of_max_credit, max_loss=self.max_loss)
+        return d
+
+
+@dataclass
+class Ledger:
+    mode: str
+    starting_cash: float
+    cash: float
+    created_at: str
+    positions: list[Position] = field(default_factory=list)
+    events: list[dict] = field(default_factory=list)
+    path: Path = LEDGER_JSON
+
+    # -- lifecycle ---------------------------------------------------------
+    @classmethod
+    def load(cls, settings: Settings, path: Path | None = None) -> Ledger:
+        path = path or LEDGER_JSON
+        if not path.exists():
+            led = cls(mode=settings.mode, starting_cash=settings.starting_cash,
+                      cash=settings.starting_cash,
+                      created_at=dt.datetime.now().isoformat(timespec="seconds"),
+                      path=path)
+            led.log("account_opened", cash=led.cash, mode=led.mode)
+            led.save()
+            return led
+        raw = json.loads(path.read_text())
+        led = cls(mode=raw["mode"], starting_cash=raw["starting_cash"], cash=raw["cash"],
+                  created_at=raw["created_at"],
+                  positions=[Position(**p) for p in raw.get("positions", [])],
+                  events=raw.get("events", []), path=path)
+        return led
+
+    def save(self) -> Path:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps({
+            "mode": self.mode, "starting_cash": self.starting_cash, "cash": round(self.cash, 2),
+            "created_at": self.created_at,
+            "positions": [asdict(p) for p in self.positions],
+            "events": self.events,
+        }, indent=2))
+        return self.path
+
+    def log(self, kind: str, **payload) -> None:
+        self.events.append({"at": dt.datetime.now().isoformat(timespec="seconds"),
+                            "kind": kind, **payload})
+
+    # -- views -------------------------------------------------------------
+    @property
+    def open_positions(self) -> list[Position]:
+        return [p for p in self.positions if p.status == OPEN]
+
+    @property
+    def closed_positions(self) -> list[Position]:
+        return [p for p in self.positions if p.status != OPEN]
+
+    @property
+    def collateral_held(self) -> float:
+        return round(sum(p.collateral for p in self.open_positions), 2)
+
+    @property
+    def buying_power(self) -> float:
+        return round(self.cash - self.collateral_held, 2)
+
+    @property
+    def net_liq(self) -> float:
+        """Cash minus the cost to close every open spread at its current mark."""
+        liab = sum(p.mark_cost_to_close * 100 * p.contracts for p in self.open_positions)
+        return round(self.cash - liab, 2)
+
+    @property
+    def realized_pl(self) -> float:
+        return round(sum(p.realized_pl for p in self.closed_positions), 2)
+
+    @property
+    def unrealized_pl(self) -> float:
+        return round(sum(p.open_pl for p in self.open_positions), 2)
+
+    @property
+    def total_return(self) -> float:
+        return round((self.net_liq - self.starting_cash) / self.starting_cash, 4)
+
+    def sector_counts(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for p in self.open_positions:
+            out[p.sector] = out.get(p.sector, 0) + 1
+        return out
+
+    def by_id(self, pid: str) -> Position | None:
+        for p in self.positions:
+            if p.id == pid or p.id.startswith(pid):
+                return p
+        return None
+
+    # -- mutations ---------------------------------------------------------
+    def open_position(self, pos: Position) -> Position:
+        self.cash = round(self.cash + pos.credit_dollars, 2)
+        self.positions.append(pos)
+        self.log("position_opened", id=pos.id, symbol=pos.symbol,
+                 strikes=f"{pos.short_strike:g}/{pos.long_strike:g}",
+                 expiration=pos.expiration, contracts=pos.contracts,
+                 credit=pos.credit_dollars, collateral=pos.collateral,
+                 proposal_id=pos.proposal_id, approved_by=pos.approved_by)
+        return pos
+
+    def close_position(self, pos: Position, debit: float, reason: str,
+                       fees: float = 0.0, status: str = CLOSED) -> Position:
+        cost = round(debit * 100 * pos.contracts + fees, 2)
+        self.cash = round(self.cash - cost, 2)
+        pos.close_debit = debit
+        pos.closed_at = dt.datetime.now().isoformat(timespec="seconds")
+        pos.close_reason = reason
+        pos.status = status
+        pos.fees_paid = round(pos.fees_paid + fees, 2)
+        pos.realized_pl = round(pos.credit_dollars - cost, 2)
+        self.log("position_closed", id=pos.id, symbol=pos.symbol, reason=reason,
+                 debit=debit, realized_pl=pos.realized_pl, status=status)
+        return pos
+
+
+def new_id() -> str:
+    return uuid.uuid4().hex[:8]
