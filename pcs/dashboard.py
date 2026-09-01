@@ -551,11 +551,18 @@ _SIG_CLASS = {"HOLDING": "s-hold", "READY": "s-ready", "BLOCKED": "s-block",
 
 
 def _watch_pill() -> str:
+    """Never a bare count.
+
+    This used to render the READY count when it was non-zero and the total
+    entry count otherwise -- so "1" meant either "one name is ready to trade"
+    or "one name is tracked and none are ready", which are opposite readings of
+    the same glyph. The word is what carries the meaning; keep it.
+    """
     wl = watchlist.load()
     if wl is None:
-        return "0"
+        return "none"
     ready = wl.count("READY")
-    return str(ready) if ready else str(len(wl.entries))
+    return f"{ready} ready" if ready else f"{len(wl.entries)} watched"
 
 
 def _watchlist_panel() -> str:
