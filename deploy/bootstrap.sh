@@ -184,11 +184,21 @@ if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
   # attempt and the failure below says exactly what to do. The local checks
   # above are the ones that catch a mistake certbot would misreport.
 
-  rm -f /etc/nginx/sites-enabled/pcs          # don't break nginx meanwhile
+  # Serve the challenge from a throwaway HTTP-only vhost and use `certonly`, so
+  # certbot obtains the certificate without editing a single line of nginx
+  # config. The full vhost cannot be enabled yet -- it references a certificate
+  # that does not exist -- and letting certbot pick a block for itself is how
+  # the domain ends up attached to the default site.
+  rm -f /etc/nginx/sites-enabled/pcs
+  sed "s/PCS_DOMAIN/$DOMAIN/g" "$APP/deploy/nginx-pcs-acme.conf" \
+    > /etc/nginx/sites-available/pcs-acme
+  ln -sf /etc/nginx/sites-available/pcs-acme /etc/nginx/sites-enabled/pcs-acme
   nginx -t && systemctl reload nginx
 
-  if ! certbot --nginx -d "$DOMAIN" --agree-tos \
+  if ! certbot certonly --webroot -w "$WEB" -d "$DOMAIN" --agree-tos \
         --register-unsafely-without-email --non-interactive; then
+    rm -f /etc/nginx/sites-enabled/pcs-acme
+    nginx -t && systemctl reload nginx
     cat >&2 <<EOF
 
 !! certbot could not prove you control $DOMAIN.
@@ -221,8 +231,22 @@ if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
 EOF
     exit 1
   fi
-  ln -sf "$CONF" /etc/nginx/sites-enabled/pcs
+  rm -f /etc/nginx/sites-enabled/pcs-acme
 fi
+
+ln -sf "$CONF" /etc/nginx/sites-enabled/pcs
+
+# Two server blocks claiming one name on 443 is not an nginx error -- the first
+# one loaded simply wins, and `sites-enabled/default` sorts before `pcs`. That
+# is exactly how this box ended up serving the welcome page over TLS.
+for other in /etc/nginx/sites-enabled/*; do
+  [ "$(basename "$other")" = "pcs" ] && continue
+  if grep -qE "server_name[^;]*\b$(echo "$DOMAIN" | sed 's/\./\\./g')\b" "$other" 2>/dev/null; then
+    warn "$(basename "$other") also claims $DOMAIN. nginx will serve whichever"
+    warn "loads first, which is probably not the dashboard. Remove the name from"
+    warn "it (certbot adds one when it is allowed to edit config) and reload."
+  fi
+done
 
 nginx -t || die "nginx config is invalid -- NOT reloading; the existing site is untouched"
 systemctl reload nginx
