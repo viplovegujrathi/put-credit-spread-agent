@@ -39,6 +39,92 @@ DASHBOARD_HTML = ROOT / "dashboard.html"
 _web_root = os.environ.get("PCS_WEB_ROOT") or "/var/www/pcs"
 WEB_INDEX = (Path(_web_root) / "index.html") if Path(_web_root).is_dir() else None
 
+# Writable state belonging to the login service, which runs as `pcs` and must
+# never be able to touch the ledger. Credentials stay in /etc/pcs, root-owned
+# and read-only to that process; anything the web service WRITES lives here.
+_state = os.environ.get("PCS_STATE_DIR") or "/var/lib/pcs"
+STATE_DIR = Path(_state) if Path(_state).is_dir() else DATA_DIR
+
+# Settings the dashboard may change, and the bounds it must respect.
+#
+# An allowlist, not "anything on Settings". This file is reachable from a
+# browser over the internet, every login sees the same page and there is no
+# admin tier -- so the set of things a viewer can change has to be chosen
+# rather than inherited. `paper_trading`, `auto_approve`, `mode` and
+# `starting_cash` are absent on purpose: nothing reachable from a browser may
+# arm trading or waive the human approval gate.
+DASHBOARD_SETTABLE: dict[str, tuple[int, int]] = {
+    "max_open_positions": (1, 50),
+}
+
+# The dashboard writes here rather than into data/settings.json. Two reasons:
+# the login service's write access stays confined to one directory that holds
+# no account state, and this path is outside $APP, which is rsynced with
+# --delete on every redeploy.
+OVERRIDES_JSON = Path(os.environ.get("PCS_OVERRIDES")
+                      or (STATE_DIR / "overrides.json"))
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write via a sibling temp file and rename.
+
+    Two processes now write settings: the CLI and the login service. A reader
+    that catches a half-written file gets a JSON error on the file that holds
+    the risk limits, so the write is never allowed to be partially visible.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def load_overrides(path: Path | None = None) -> dict:
+    """What the dashboard has changed. Never fatal: a corrupt or unreadable
+    override file falls back to the configured value rather than refusing to
+    start, because this file is written by a web request."""
+    path = path or OVERRIDES_JSON
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v for k, v in raw.items() if k in DASHBOARD_SETTABLE}
+
+
+def set_override(key: str, value, path: Path | None = None) -> None:
+    """Record a dashboard change. Raises ValueError if the key is not settable
+    from a browser or the value is out of bounds -- the caller is a web
+    request, so neither check may be skipped."""
+    if key not in DASHBOARD_SETTABLE:
+        raise ValueError(f"{key!r} cannot be set from the dashboard")
+    lo, hi = DASHBOARD_SETTABLE[key]
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a whole number") from None
+    if not lo <= value <= hi:
+        raise ValueError(f"{key} must be between {lo} and {hi}")
+    path = path or OVERRIDES_JSON
+    cur = load_overrides(path)
+    cur[key] = value
+    _atomic_write(path, json.dumps(cur, indent=2))
+
+
+def clear_override(key: str, path: Path | None = None) -> bool:
+    """Drop a dashboard override so the CLI value takes effect again.
+
+    Called by `run.py config --set`. Without it the two writers disagree
+    silently and whichever wrote first appears to have been ignored.
+    """
+    path = path or OVERRIDES_JSON
+    cur = load_overrides(path)
+    if key not in cur:
+        return False
+    del cur[key]
+    _atomic_write(path, json.dumps(cur, indent=2))
+    return True
+
 
 # --------------------------------------------------------------------------
 # Tier 1: strategy rules (fixed by the skill)
@@ -94,7 +180,11 @@ class Settings:
 
     # --- portfolio-level risk (section 1.8; skill leaves these to the user) -
     max_total_collateral: float = 2400.0   # 80% of $3,000 -- keeps dry powder
-    max_open_positions: int = 4
+    # A ceiling on COUNT, not on money. The binding constraints on this account
+    # are max_total_collateral and the buying-power floor -- ten $5-wide spreads
+    # would want ~$5,000 of collateral against a $2,400 cap, so the money runs
+    # out first and this number stops being the thing that binds.
+    max_open_positions: int = 10
     max_positions_per_sector: int = 2
     max_positions_per_ticker: int = 1
 
@@ -260,7 +350,16 @@ class Settings:
         return "agent (auto-approve, paper)"
 
     @classmethod
-    def load(cls, path: Path | None = None) -> Settings:
+    def load(cls, path: Path | None = None,
+             overrides: Path | None = None) -> Settings:
+        """settings.json first, then whatever the dashboard changed.
+
+        The override is applied LAST so a value set from the page takes effect
+        on the agent's very next run with no restart and no redeploy -- that is
+        the whole point of making it settable there. `run.py config --set`
+        clears the override for any key it writes, so the last human action
+        wins whichever way it was made.
+        """
         path = path or (DATA_DIR / "settings.json")
         s = cls()
         if path.exists():
@@ -268,12 +367,14 @@ class Settings:
             for k, v in raw.items():
                 if hasattr(s, k):
                     setattr(s, k, v)
+        for k, v in load_overrides(overrides).items():
+            if hasattr(s, k):
+                setattr(s, k, v)
         return s
 
     def save(self, path: Path | None = None) -> Path:
         path = path or (DATA_DIR / "settings.json")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(self), indent=2))
+        _atomic_write(path, json.dumps(asdict(self), indent=2))
         return path
 
 

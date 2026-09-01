@@ -14,7 +14,8 @@ RestartSec=2
 
 Environment=HOME=/opt/pcs
 Environment=PCS_VIEWERS=/etc/pcs/viewers
-Environment=PCS_SESSION_KEY=/etc/pcs/session.key
+Environment=PCS_SESSION_KEY=/var/lib/pcs/session.key
+Environment=PCS_OVERRIDES=/var/lib/pcs/overrides.json
 
 NoNewPrivileges=true
 PrivateTmp=true
@@ -25,9 +26,17 @@ RestrictAddressFamilies=AF_INET AF_UNIX
 # It listens on loopback only; nothing it does needs to reach the network.
 IPAddressAllow=localhost
 IPAddressDeny=any
-# The signing key is created on first start, so /etc/pcs must be writable.
-# Nothing else is: this process must never be able to touch the ledger.
-ReadWritePaths=/etc/pcs
+# Creates /var/lib/pcs, owned by this unit's user, and adds it to
+# ReadWritePaths. Everything this process writes lives there: the signing key
+# and the dashboard's setting overrides.
+#
+# /etc/pcs is deliberately NOT writable. It is 0750 root:pcs, so the
+# credentials in it can be read and not replaced -- a directory this process
+# could write is a directory in which it could unlink `viewers` and put its
+# own there. And nothing here can reach the ledger at all.
+StateDirectory=pcs
+StateDirectoryMode=0750
+ReadOnlyPaths=/etc/pcs
 
 [Install]
 WantedBy=multi-user.target

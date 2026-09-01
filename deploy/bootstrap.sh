@@ -193,10 +193,24 @@ fi
 say "login service"
 cp "$APP/deploy/pcs-authd.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now pcs-authd >/dev/null 2>&1 || true
-# The signing key is created by the service on first start; make sure it can.
+
+# /etc/pcs holds credentials and is read-only to the login service: 0750
+# root:pcs, so `pcs` can read `viewers` and cannot replace it. Everything the
+# service WRITES goes to /var/lib/pcs, which systemd creates for it
+# (StateDirectory=). An earlier build put the signing key in /etc/pcs, where
+# the service could not have created it in the first place -- move it rather
+# than leaving a stale key behind that nothing reads.
+install -d -m 0750 -o "$SVC_USER" -g "$SVC_USER" /var/lib/pcs
+if [ -f /etc/pcs/session.key ] && [ ! -f /var/lib/pcs/session.key ]; then
+  mv /etc/pcs/session.key /var/lib/pcs/session.key
+  chown "$SVC_USER:$SVC_USER" /var/lib/pcs/session.key
+  chmod 600 /var/lib/pcs/session.key
+  warn "moved the session key to /var/lib/pcs -- existing logins still work."
+fi
 chown -R root:"$SVC_USER" /etc/pcs 2>/dev/null || true
 chmod 750 /etc/pcs
+
+systemctl enable --now pcs-authd >/dev/null 2>&1 || true
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   curl -fsS -o /dev/null "http://127.0.0.1:8765/login" 2>/dev/null && break
   sleep 0.5

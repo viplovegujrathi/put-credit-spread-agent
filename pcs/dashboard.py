@@ -13,7 +13,14 @@ import html
 import sys
 
 from . import brand, health, learning, watchlist
-from .config import DASHBOARD_HTML, STRATEGY, WEB_INDEX, Settings
+from .config import (
+    DASHBOARD_HTML,
+    DASHBOARD_SETTABLE,
+    STRATEGY,
+    WEB_INDEX,
+    Settings,
+    load_overrides,
+)
 from .exits import decide
 from .ledger import Ledger, Position
 from .proposer import Proposal
@@ -133,6 +140,28 @@ tbody tr{transition:background .12s} tbody tr:hover{background:var(--panel2)}
 .dim{color:var(--dim)}
 
 /* -- chips -------------------------------------------------------------- */
+/* --- the one editable setting, and signing out --------------------- */
+.setf{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:9px 0 2px}
+.setf label{font-size:12px;color:var(--dim);letter-spacing:.02em}
+.setf input[type=number]{width:78px;padding:5px 8px;border-radius:8px;
+border:1px solid var(--line);background:var(--panel);color:var(--ink);
+font:inherit;font-variant-numeric:tabular-nums;-moz-appearance:textfield}
+.setf input[type=number]:focus{outline:2px solid var(--accln);outline-offset:1px;
+border-color:var(--accent)}
+.setf button{appearance:none;cursor:pointer;padding:5px 13px;border-radius:8px;
+border:1px solid var(--accln);background:var(--accbg);color:var(--accent);
+font:inherit;font-weight:650}
+.setf button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+.setnote{font-size:11.5px;color:var(--dim)}
+.logoutf{flex:none;margin-left:8px}
+.logoutf button{appearance:none;cursor:pointer;height:34px;padding:0 13px;
+border-radius:10px;border:1px solid var(--line);background:var(--panel);
+color:var(--dim);font:inherit;font-size:12.5px;font-weight:600;
+transition:color .15s,border-color .15s,transform .15s}
+.logoutf button:hover{color:var(--neg);border-color:var(--negln);
+transform:translateY(-1px)}
+.saved{background:var(--posbg);border:1px solid var(--posln);color:var(--pos);
+border-radius:11px;padding:10px 14px;margin-bottom:14px;font-size:13px}
 /* --- liveness and alerting ------------------------------------------- */
 /* The page is read by someone who assumes silence means calm. These are the
    two places that assumption is checked: the heartbeat says the agent ran,
@@ -479,6 +508,44 @@ def _exit_pill(p: Position, d, mark: str, sess: SessionState | None,
                 f'Still open, still moving.</div>')
     return (f'<span class="tag act">{_e(d.headline)}</span>'
             '<div class="note">the agent closes this on the next mark.</div>')
+
+
+def _max_positions_control(settings: Settings) -> str:
+    """The one setting editable from the page.
+
+    Posts to the login service, which is the only thing here with a writable
+    path and a session to check it against. The agent picks the new value up on
+    its next run because `Settings.load()` reads the override file every time --
+    there is no restart and no redeploy in the loop.
+
+    The page itself is a static file, so it keeps showing the OLD number until
+    something re-renders it. Saying so is better than a number that appears to
+    have ignored you; the mark timer rewrites this page every 15 minutes during
+    market hours.
+    """
+    lo, hi = DASHBOARD_SETTABLE["max_open_positions"]
+    src = ("set from this page" if "max_open_positions" in load_overrides()
+           else "from data/settings.json")
+    return (
+        f'<form class="setf" method="post" action="/settings">'
+        f'<input type="hidden" name="key" value="max_open_positions">'
+        f'<input type="hidden" name="next" value="/?saved=max_open_positions">'
+        f'<label for="maxpos">Max open positions</label>'
+        f'<input id="maxpos" name="value" type="number" inputmode="numeric" '
+        f'min="{lo}" max="{hi}" step="1" value="{settings.max_open_positions}" '
+        f'aria-describedby="maxpos-note">'
+        f'<button type="submit">Save</button>'
+        f'<span class="setnote" id="maxpos-note">{lo}&ndash;{hi} '
+        f'&middot; {_e(src)} &middot; the agent applies it on its next run</span>'
+        f"</form>")
+
+
+def _logout_button() -> str:
+    """POST, not a link. A GET logout is triggerable from any page that can
+    embed an image, and browsers prefetch links."""
+    return ('<form class="logoutf" method="post" action="/logout">'
+            '<button type="submit" title="Sign out of the dashboard">Sign out</button>'
+            "</form>")
 
 
 def _alerts_panel(alerts: list) -> str:
@@ -1014,7 +1081,8 @@ if(t)document.documentElement.setAttribute('data-theme',t);}}catch(e){{}}</scrip
 <div class="brandtag">S&amp;P 500 &middot; beaten-down &middot; defined risk</div>
 </div></div>
 <button class="themer" id="themer" type="button" aria-label="Switch between the light
-and dark palette" title="Light / dark">&#9681;</button></div>
+and dark palette" title="Light / dark">&#9681;</button>
+{_logout_button()}</div>
 <div class="sub">{_e(settings.account_label)} &middot; mode <b>{_e(led.mode)}</b> &middot;
 opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H:%M}</div>
 <div class="banner">{_e(sess.banner)}</div>
@@ -1034,6 +1102,7 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 </div>
 
 <section class="panel" id="p-now">
+<div class="saved" id="saved" hidden></div>
 {_alerts_panel(alerts)}
 <div class="cards">{card_html}</div>
 
@@ -1042,7 +1111,8 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 <li>Collateral deployed: <b>${led.collateral_held:,.0f}</b> of
 ${settings.max_total_collateral:,.0f} cap ({used_pct:.0%} used)</li>
 <li>Open positions: <b>{len(led.open_positions)}</b> of {settings.max_open_positions}
-&middot; max {settings.max_positions_per_sector} per sector &middot; currently: {_e(sectors)}</li>
+&middot; max {settings.max_positions_per_sector} per sector &middot; currently: {_e(sectors)}
+{_max_positions_control(settings)}</li>
 <li>Worst case: if every open spread went to max loss the account would lose
 <b>${led.collateral_held:,.0f}</b>, which is <b>{risk_pct:.0%}</b> of a
 ${led.net_liq:,.0f} net liq, across {len(led.open_positions)} position(s) in
@@ -1136,6 +1206,19 @@ nobody is watching. Closing only, paper only, never on a stale mark.</li>
   var saved;
   try{{ saved = localStorage.getItem('pcs-tab'); }}catch(e){{}}
   if(saved && document.getElementById('p-'+saved)) show(saved);
+
+  // A save redirects back here with ?saved=<key>. This page is a static file
+  // rewritten by the agent, so the number above is still the old one until the
+  // next run re-renders it -- which is exactly what this says.
+  var m=/[?&]saved=([a-z_]+)/.exec(location.search), box=document.getElementById('saved');
+  if(m && box){{
+    box.textContent='Saved '+m[1].replace(/_/g,' ')+
+      '. The agent uses it on its next run. This page still shows the old '+
+      'number until it is rebuilt (the mark timer does that every 15 minutes '+
+      'while the market is open).';
+    box.hidden=false;
+    history.replaceState(null,'',location.pathname);
+  }}
 
   var root=document.documentElement, btn=document.getElementById('themer');
   if(btn) btn.addEventListener('click', function(){{

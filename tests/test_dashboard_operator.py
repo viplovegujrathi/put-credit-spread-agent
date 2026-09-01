@@ -289,3 +289,49 @@ def test_the_hidden_events_are_still_in_the_ledger(led, settings, open_market,
     led.log("marked", positions=1)
     _render(led, settings, open_market, tmp_path, monkeypatch)
     assert any(e["kind"] == "marked" for e in led.events)
+
+
+# --- the editable cap and signing out ---------------------------------------
+def test_the_max_positions_control_is_rendered(led, settings, open_market,
+                                               tmp_path, monkeypatch):
+    doc = _render(led, settings, open_market, tmp_path, monkeypatch)
+    assert 'action="/settings"' in doc
+    assert 'name="key" value="max_open_positions"' in doc
+
+
+def test_the_control_carries_the_same_bounds_the_server_enforces(
+        led, settings, open_market, tmp_path, monkeypatch):
+    """A form that offers a value the endpoint rejects is a form that lies."""
+    from pcs.config import DASHBOARD_SETTABLE
+    lo, hi = DASHBOARD_SETTABLE["max_open_positions"]
+    doc = _render(led, settings, open_market, tmp_path, monkeypatch)
+    assert f'min="{lo}"' in doc and f'max="{hi}"' in doc
+
+
+def test_the_control_shows_the_value_in_force(led, settings, open_market,
+                                              tmp_path, monkeypatch):
+    settings.max_open_positions = 7
+    doc = _render(led, settings, open_market, tmp_path, monkeypatch)
+    flat = " ".join(doc.split())
+    assert 'id="maxpos"' in flat and 'value="7"' in flat
+
+
+def test_the_settings_form_posts_rather_than_gets(led, settings, open_market,
+                                                  tmp_path, monkeypatch):
+    doc = _render(led, settings, open_market, tmp_path, monkeypatch)
+    assert '<form class="setf" method="post"' in doc
+
+
+def test_signing_out_is_offered(led, settings, open_market, tmp_path, monkeypatch):
+    doc = _render(led, settings, open_market, tmp_path, monkeypatch)
+    assert 'action="/logout"' in doc
+    assert "Sign out" in doc
+
+
+def test_signing_out_is_a_post_not_a_link(led, settings, open_market,
+                                          tmp_path, monkeypatch):
+    """A GET logout fires from any page that can embed an image, and browsers
+    prefetch links."""
+    doc = _render(led, settings, open_market, tmp_path, monkeypatch)
+    assert '<form class="logoutf" method="post" action="/logout">' in doc
+    assert '<a href="/logout"' not in doc

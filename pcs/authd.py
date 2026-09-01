@@ -38,12 +38,16 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import brand, viewers
+from . import brand, config, viewers
 
 COOKIE = "pcs_session"
 SESSION_SECONDS = int(os.environ.get("PCS_SESSION_SECONDS", 7 * 24 * 3600))
 VIEWERS_FILE = Path(os.environ.get("PCS_VIEWERS", "/etc/pcs/viewers"))
-SECRET_FILE = Path(os.environ.get("PCS_SESSION_KEY", "/etc/pcs/session.key"))
+# /etc/pcs is root-owned and 0750, so this process can READ the credentials
+# there and cannot create anything. Everything it writes -- the signing key,
+# the dashboard's setting overrides -- lives in its own state directory.
+SECRET_FILE = Path(os.environ.get("PCS_SESSION_KEY",
+                                  "/var/lib/pcs/session.key"))
 MAX_BODY = 4096          # a login form is a few hundred bytes; anything larger is not one
 
 
@@ -298,6 +302,57 @@ class Handler(BaseHTTPRequestHandler):
         return ("Set-Cookie", f"{COOKIE}={value}; Path=/; HttpOnly; Secure; "
                               f"SameSite=Lax; Max-Age={max_age}")
 
+    def _same_origin(self) -> bool:
+        """Reject a cross-site form post.
+
+        SameSite=Lax already withholds the cookie on a cross-site POST, so this
+        is the second lock rather than the first -- but this endpoint changes a
+        risk limit, and one cheap header check is worth more than the argument
+        about whether every browser in use implements Lax the same way.
+        """
+        origin = self.headers.get("Origin")
+        host = self.headers.get("Host", "")
+        if origin is None:                      # curl, or a same-origin browser
+            ref = self.headers.get("Referer")   # that did not send one
+            return ref is None or urllib.parse.urlsplit(ref).netloc == host
+        return urllib.parse.urlsplit(origin).netloc == host
+
+    def _settings(self, form: dict) -> None:
+        """Change one allowlisted setting, for a signed-in viewer.
+
+        This is the only endpoint that writes anything the agent reads, so all
+        four checks are load-bearing: signed in, same origin, key on the
+        allowlist, value inside its bounds. `config.set_override` re-checks the
+        last two -- a validator the caller can forget to run is not a
+        validator.
+
+        Note what is NOT reachable here. There is no admin tier: every login
+        sees the same page, so every login can do this. It is bounded to
+        settings that cannot arm trading or waive the human approval gate.
+        """
+        name = self._session()
+        if not name:
+            return self._send(HTTPStatus.UNAUTHORIZED, b"sign in first",
+                              ctype="text/plain; charset=utf-8")
+        if not self._same_origin():
+            self.log_message("cross-origin settings post rejected from %s",
+                             self.client_address[0])
+            return self._send(HTTPStatus.FORBIDDEN, b"cross-origin request refused",
+                              ctype="text/plain; charset=utf-8")
+        key, value = form.get("key", ""), form.get("value", "")
+        nxt = safe_next(form.get("next", "/"))
+        try:
+            config.set_override(key, value)
+        except ValueError as exc:
+            self.log_message("rejected %r=%r from %r: %s", key, value, name, exc)
+            return self._send(HTTPStatus.BAD_REQUEST,
+                              str(exc).encode("utf-8"),
+                              ctype="text/plain; charset=utf-8")
+        # Logged, because a risk limit changing is an account event and the
+        # page it changes is shared. stderr goes to the journal.
+        self.log_message("settings: %s set %s=%s", name, key, value)
+        self._send(HTTPStatus.SEE_OTHER, b"", headers=[("Location", nxt)])
+
     # -- routes -----------------------------------------------------------
     def do_GET(self):
         path = urllib.parse.urlsplit(self.path)
@@ -334,6 +389,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/logout":
             return self._send(HTTPStatus.SEE_OTHER, b"",
                               headers=[self._set_cookie("", 0), ("Location", "/login")])
+
+        if path == "/settings":
+            return self._settings(form)
 
         if path != "/login":
             return self._send(HTTPStatus.NOT_FOUND, b"not found",

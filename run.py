@@ -41,6 +41,7 @@ from pcs import (
     universe,
     watchlist,
 )
+from pcs import config as config_mod
 from pcs import ledger as ledger_mod
 from pcs.config import DATA_DIR, PROPOSALS_JSON, STRATEGY, Settings
 from pcs.optimizer import Spread
@@ -734,6 +735,11 @@ def cmd_config(args, settings: Settings) -> int:
             before = getattr(settings, key)
             setattr(settings, key, val)
             print(f"  {key}: {_cfg_val(before)} -> {_cfg_val(val)}")
+            # The dashboard writes an override that is applied AFTER
+            # settings.json. Leaving it in place would make this command look
+            # like it had been ignored.
+            if config_mod.clear_override(key):
+                print("    (cleared the value set from the dashboard)")
         path = settings.save()
         print(f"\nsaved: {path}")
 
