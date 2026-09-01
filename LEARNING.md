@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 302 tests, ruff clean.
+- 340 tests, ruff clean.
 
 ---
 
@@ -378,6 +378,16 @@ testable without a ledger.
 The strategy's numbers are now overridable per account (`max_collateral_per_trade`,
 `min_credit_per_trade`, `max_credit_per_trade`, `min_otm_cushion`,
 `take_profit_pct`, and `max_loss_per_trade` as an alias for the collateral cap).
+
+**The take-profit trigger is the bottom of its band, not the middle.** The rule
+fires on the first mark at or above `take_profit_pct`; the band's upper edge is
+the line a position should never still be held past. That upper edge is not
+reachable by a `Settings` override -- only `take_profit_pct` is in
+`_OVERRIDABLE` -- so widening the band (50-65% -> 50-75% on 2026-09-01) had to
+change `STRATEGY` itself, and with it `docs/STRATEGY.md` and the vendored
+`SKILL.md`. `_validate()` now asserts the trigger sits inside the band, because
+the band is rendered on the dashboard and on every ticket as the rule in force:
+a trigger outside it makes the page state something the engine does not do.
 Making them settable was easy. Making them *safe* to settle turned on three
 things:
 
