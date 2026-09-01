@@ -87,10 +87,46 @@ class Position:
         gross = self.credit_open * 100 * self.contracts
         return round(self.open_pl / gross, 4) if gross else 0.0
 
+    @property
+    def breakeven(self) -> float:
+        """Where the underlying has to close for this spread to break even.
+
+        Derivable from two stored fields and, until now, never shown. Between
+        the short strike and here the position loses money without any exit
+        rule having fired.
+        """
+        return round(self.short_strike - self.credit_open, 2)
+
+    @property
+    def cushion(self) -> float | None:
+        """How far the underlying sits above the short strike, as a fraction.
+
+        Negative means through it. None means we have no spot to compare -- an
+        unknown cushion and a comfortable one must not render the same.
+        """
+        if not self.mark_spot:
+            return None
+        return round((self.mark_spot - self.short_strike) / self.mark_spot, 4)
+
+    @property
+    def mark_age_minutes(self) -> float | None:
+        """Age of the price behind every P&L figure on this row.
+
+        None means never marked: the numbers shown are the fill, not a mark.
+        """
+        if not self.marked_at:
+            return None
+        try:
+            at = dt.datetime.fromisoformat(self.marked_at)
+        except ValueError:
+            return None
+        return max(0.0, (dt.datetime.now() - at).total_seconds() / 60)
+
     def as_dict(self) -> dict:
         d = asdict(self)
         d.update(dte=self.dte, open_pl=self.open_pl,
-                 pct_of_max_credit=self.pct_of_max_credit, max_loss=self.max_loss)
+                 pct_of_max_credit=self.pct_of_max_credit, max_loss=self.max_loss,
+                 breakeven=self.breakeven, cushion=self.cushion)
         return d
 
 

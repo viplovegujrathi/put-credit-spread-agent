@@ -103,11 +103,30 @@ deploy, and it is the one that did not report.
 
 ## Status
 
-Operator finding 6 is **partly done**: `Entry.blockers` (and `reason` when
-there are no blockers) now render as a visible line on each watchlist row
-instead of a hover tooltip, pinned by three tests. `pop_est` and the earnings
-*date* are still dropped. Nothing else in this document has been implemented;
-it is a record of what was found, not a changelog. Operator findings 2, 3 and 4 are the ones that can
-cost money silently and should be taken first — all three are variants of the
-same defect: **the page cannot distinguish "nothing happened" from "nothing
-ran."**
+**All six must-have findings and all three nice-to-haves are implemented**, as
+of 2026-09-01. What changed:
+
+| # | Finding | Where it landed |
+|---|---|---|
+| 1 | spot, distance to short strike, breakeven | `_positions_table()` gained `spot`, `to short` and `breakeven` columns; `Position.breakeven` and `Position.cushion` are derived from stored fields |
+| 2 | undated marks | `Position.mark_age_minutes` + `_mark_state()`; every row says when it was priced, and stale/aging/never render differently. `cost to close` is labelled **modelled mid** |
+| 3 | due-but-held is indistinguishable from handled | `_exit_pill()` renders four distinct states — will close / HELD (market shut) / NEEDS YOU (auto-exit off or live) / NOT DECIDED (stale mark). The page no longer presents a render-time `decide()` on a mark `review()` refused to act on |
+| 4 | no heartbeat | `pcs/health.py` persists every run to `data/health.json`; `_heartbeat()` shows last-run age and runs-today per timer, red when the mark loop has missed two intervals during RTH |
+| 5 | concentration never stated as a fraction | the collateral card carries `% of net liq` and turns red above 50%; the limits list states the worst case in dollars *and* percent, and says the sector cap counts labels, not correlation |
+| 6 | watchlist blockers thrown away | done earlier; `pop_est` and the earnings **date** now render too (`Entry.earnings_date` is carried from the candidate) |
+
+Nice-to-haves: average credit capture % and exit-reason counts sit next to the
+win rate; `cost to close` is qualified; the event log filters routine `marked`
+rows and caps at 250 with a footer saying what was hidden — they stay in
+`data/ledger.json`, which is the audit trail.
+
+**The alert list is detected, not delivered.** `health.alerts()` implements all
+five states the operator wanted pushed, and `_alerts_panel()` renders them above
+the cards. That makes them impossible to miss *on the page*, which is still a
+pull. A real push needs a delivery channel (email, webhook, SMS) and that is a
+decision — an outbound integration and a place to put a secret — not an
+implementation detail. The detection half is done and tested; wiring a channel
+to it is a small change once the channel is chosen.
+
+Seats 2 and 3 (design, trust & safety) still have not reported. Seat 3 is the
+one whose findings would gate a deploy.

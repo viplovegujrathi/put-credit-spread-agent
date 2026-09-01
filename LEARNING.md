@@ -34,6 +34,7 @@ module. Update it in the same commit as the code it describes.
 | `pcs/brand.py` | the mark: logo, favicon, the one chart path | anything with dependencies |
 | `pcs/viewers.py` | dashboard logins: PBKDF2 hash, verify, add, revoke | anything about sessions |
 | `pcs/authd.py` | the login page, the session cookie, nginx's `auth_request` | anything about trading |
+| `pcs/health.py` | what each run DID: run records, mark staleness, the five alert conditions | trading decisions; it observes and never mutates |
 
 ### The gates, and where each one lives
 
@@ -128,7 +129,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 250 tests, ruff clean.
+- 302 tests, ruff clean.
 
 ---
 
@@ -582,3 +583,67 @@ degrades to its light value rather than to nothing.
 One real bug the rewrite fixed: `.tag` was defined twice — once for the brand
 tagline, once for the pill chips in tables — and the pill rules won, wrapping
 the tagline in a rounded box. Renamed to `.brandtag`.
+
+
+---
+
+## 21. A ledger cannot record what did not happen
+
+The dashboard read the ledger, and a ledger only holds events. The three states
+that cost the most money are non-events:
+
+* a timer that never fired,
+* a mark that failed to re-price,
+* an exit that was due and was held.
+
+All three render as a flat book with yesterday's numbers — identical to a quiet
+market. `cmd_mark` distinguished all three and printed them to stdout, which on
+a systemd timer is a file nobody opens.
+
+`pcs/health.py` persists one `Run` per command to `data/health.json` (what it
+priced, what it decided, what it could not act on) and the page reads it. Three
+rules that fell out of building it:
+
+* **Telemetry must never be able to break trading.** Every read and write in
+  that module swallows its errors. A corrupt health file starts a fresh record
+  rather than raising inside a mark.
+* **A row with an unknown field is skipped, not fatal.** A file written by a
+  newer build must not take the whole record down on a rollback.
+* **Record the stale symbols, do not re-derive them.** A position that failed to
+  price today can still carry a perfectly good mark from yesterday, so
+  `marked_at` does not identify it. Only the run that attempted the mark knows.
+
+## 22. "Stale" is a property of the reader, not the file
+
+A mark taken 40 minutes ago is stale during regular hours and completely normal
+overnight — the timer only fires 09:35–16:00. `_mark_state()` therefore takes
+the session, and the same timestamp renders `fresh` after the close and `stale`
+at 11:00. An alerting rule that ignores this fires every single night and trains
+the reader to scroll past the panel that will one day matter.
+
+## 23. The sector cap counts labels, not correlation
+
+MRVL + QCOM (Information Technology) and META + GOOGL (Communication Services)
+is two per sector and passes `max_positions_per_sector`. It is also four
+large-cap tech names that move together on one bad index day: $3,000 of capital
+at risk on a $3,000 account, $1,953 of max loss. The cap was satisfied the whole
+way in. The page now states the worst case as a percentage and says plainly that
+the cap counts GICS labels — this is COUNCIL.md operator finding 5, and it
+happened live on 2026-09-01 before it was fixed.
+
+## 24. A machine check must not depend on prose
+
+`bootstrap.sh` refused to overwrite `/etc/nginx/sites-available/pcs` unless it
+found the phrase `put credit spread agent` in it — a phrase from the config's
+header comment. Rewriting that header for the login work took the phrase with
+it, so every box that already had a config refused every subsequent redeploy,
+and died *before* installing the login service it was there to install.
+
+Two fixes, both general:
+
+* The marker is now `# managed-by: pcs-bootstrap` on line 1 and nothing else is
+  allowed to be load-bearing. A legacy config is recognised by `root /var/www/pcs;`,
+  which no unrelated vhost would contain.
+* The check moved to immediately before the write. A guard that aborts 40 lines
+  early leaves the box half-provisioned, which is worse than either outcome it
+  was choosing between. It also keeps one `.prev` copy.

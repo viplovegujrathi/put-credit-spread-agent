@@ -161,9 +161,6 @@ printf '%s\n' "$DOMAIN" > "$DOMAIN_FILE"
 command -v nginx >/dev/null || apt-get install -y -qq nginx >/dev/null
 
 CONF=/etc/nginx/sites-available/pcs
-if [ -f "$CONF" ] && ! grep -q "put credit spread agent" "$CONF"; then
-  die "$CONF exists and was not written by this script -- refusing to overwrite it"
-fi
 
 # A login is not optional: this page shows positions and balances.
 #
@@ -222,6 +219,23 @@ NGINX
   > "$WEB/50x.html"
 chown "$SVC_USER:$SVC_USER" "$WEB/50x.html"; chmod 0644 "$WEB/50x.html"
 
+# Do not clobber a vhost a human wrote at this path. Ours is recognised by the
+# marker on line 1; boxes provisioned before that marker existed are recognised
+# by pointing at our web root, which no unrelated site would do.
+#
+# This check reads for a MARKER, not for prose. It used to grep the config for
+# a phrase from the header comment -- and when that header was rewritten the
+# phrase went with it, so every box that already had a config refused every
+# subsequent redeploy. A machine check must not depend on wording.
+if [ -f "$CONF" ] \
+   && ! grep -q "managed-by: pcs-bootstrap" "$CONF" \
+   && ! grep -q "root $WEB;" "$CONF"; then
+  die "$CONF exists and was not written by this script -- refusing to overwrite it.
+  Move it aside to continue:  sudo mv $CONF $CONF.mine"
+fi
+if [ -f "$CONF" ]; then
+  cp -a "$CONF" "$CONF.prev"          # one step back, always
+fi
 sed "s/PCS_DOMAIN/$DOMAIN/g" "$APP/deploy/nginx-pcs.conf" > "$CONF"
 ln -sf "$CONF" /etc/nginx/sites-enabled/pcs
 

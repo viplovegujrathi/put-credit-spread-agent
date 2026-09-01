@@ -72,6 +72,10 @@ class Entry:
     pop_est: float | None = None
     quote_quality: str = ""
     blockers: list[str] = field(default_factory=list)
+    # Carried so the page can say WHEN, not just that earnings are in the way.
+    # "EARNINGS" with no date is unanswerable: tomorrow and in three weeks are
+    # the difference between "wait" and "this name is out for the cycle".
+    earnings_date: str = ""
 
     @property
     def rank(self) -> int:
@@ -132,7 +136,8 @@ def build(res, sized: list, led: Ledger, settings: Settings,
             continue
         e = Entry(symbol=c.symbol, name=c.name, sector=c.sector, signal=NO_FIT,
                   reason="", bucket=c.bucket, spot=c.spot, dma50=c.dma50,
-                  pct_from_dma50=c.pct_from_dma50, pct_off_high=c.pct_off_high)
+                  pct_from_dma50=c.pct_from_dma50, pct_off_high=c.pct_off_high,
+                  earnings_date=c.earnings_date or "")
 
         if c.symbol in held:
             e.signal = HOLDING
@@ -148,7 +153,9 @@ def build(res, sized: list, led: Ledger, settings: Settings,
                 if c.earnings_in_window is not False:
                     e.signal = EARNINGS
                     e.reason = ("earnings date unknown -- treated as inside the window"
-                                if c.earnings_in_window is None else "")
+                                if c.earnings_in_window is None
+                                else f"earnings {c.earnings_date} lands inside the "
+                                     f"{e.expiration} window")
                 else:
                     v = risk.check(sc.spreads[0], c.sector, pv, settings,
                                    sess=res.session, contracts=contracts)

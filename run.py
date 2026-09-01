@@ -30,6 +30,7 @@ from pcs import (
     dashboard,
     doctor,
     exits,
+    health,
     learning,
     marketdata,
     paper_broker,
@@ -190,6 +191,8 @@ def cmd_propose(args, settings: Settings) -> int:
         if not res.session.can_open_positions:
             print(f"  (held until {res.session.settle_until:%H:%M} ET - "
                   f"{res.session.open_block_reason.split(' - ')[0]})")
+    health.record("propose", detail=f"{len(props)} proposal(s), "
+                  f"{sum(1 for x in props if x.risk_ok)} clear")
     dashboard.render(led, props, settings, res.session)
     return 0
 
@@ -378,7 +381,18 @@ def cmd_mark(args, settings: Settings) -> int:
     auto = settings.auto_exit and led.mode == "paper" and not args.no_auto_exit
     actionable = [(p, d) for p, d in decisions if d.act]
 
+    # An exit that could not even be CONSIDERED because the mark behind it is
+    # stale is a third outcome, and the one with no trace anywhere: `review()`
+    # skips those positions entirely, so they leave no line to read. Decide on
+    # the old mark purely to report that something may be due and we cannot
+    # tell. Nothing is acted on here.
+    unpriced = [(p, exits.decide(p, settings)) for p in led.open_positions
+                if p.id not in fresh]
+    skipped = [(p, d) for p, d in unpriced if d.act]
+    taken_n = held_n = 0
+
     if auto and actionable and not sess.is_open:
+        held_n = len(actionable)
         led.save()
         print(f"\nEXITS DUE ({len(actionable)}) -- HELD, the market is {sess.phase}. "
               f"A close taken now would be filled at a price nobody could trade on.")
@@ -386,6 +400,7 @@ def cmd_mark(args, settings: Settings) -> int:
             print(f"  {d.headline}  {pos.symbol} [{pos.id}]: {d.reason}")
     elif auto and actionable:
         acted = paper_broker.apply_exits(led, settings, fresh, sess)
+        taken_n = len(acted)
         led.save()
         print(f"\nEXITS TAKEN ({len(acted)}) -- decided and executed by the agent")
         for pos, d in acted:
@@ -395,6 +410,7 @@ def cmd_mark(args, settings: Settings) -> int:
     else:
         led.save()
         if actionable:
+            held_n = len(actionable)
             why = ("live mode -- a close is an order, so this is a ticket for you to place"
                    if led.mode != "paper" else "auto-exit is off")
             print(f"\nEXITS DUE ({len(actionable)}) -- {why}:")
@@ -402,11 +418,25 @@ def cmd_mark(args, settings: Settings) -> int:
                 print(f"  {d.headline}  {pos.symbol} [{pos.id}]: {d.reason}")
                 print(exits.ticket(pos, d))
 
+    # Persisted BEFORE the dashboard renders, so the page reads this run rather
+    # than the previous one. This is the record that lets the page tell "nothing
+    # happened" apart from "nothing ran" -- see pcs/health.py.
+    health.record(
+        "mark", positions=len(led.open_positions) + taken_n, marked=len(fresh),
+        stale=len(unpriced), stale_symbols=sorted({p.symbol for p, _ in unpriced}),
+        exits_due=len(actionable) + len(skipped),
+        exits_taken=taken_n, exits_held=held_n, exits_skipped=len(skipped),
+        held_detail=[f"{p.symbol} {d.headline}: {d.reason[:120]}"
+                     for p, d in (actionable if held_n else []) + skipped])
+
     _print_positions(led)
     stale = [p for p in led.open_positions if p.id not in fresh]
     if stale:
         print(f"\n  ! {len(stale)} position(s) did not re-price; no exit was decided on "
               f"a stale mark: {', '.join(p.symbol for p in stale)}")
+    if skipped:
+        print(f"  ! {len(skipped)} of those would have exited on their last known "
+              f"mark: {', '.join(p.symbol for p, _ in skipped)}")
     watch = [(p, d) for p, d in decisions if not d.act and d.reason]
     if watch:
         print("\nWATCHING (no action due):")
@@ -610,6 +640,7 @@ def cmd_watch(args, settings: Settings) -> int:
 
     path = watchlist.save(wl)
     print(f"\nsaved: {path}")
+    health.record("watch", detail=f"{len(wl.entries)} name(s) watched")
     dashboard.render(led, proposer.load(), settings, res.session)
     return 0
 

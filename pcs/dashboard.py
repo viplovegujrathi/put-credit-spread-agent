@@ -12,7 +12,7 @@ import datetime as dt
 import html
 import sys
 
-from . import brand, learning, watchlist
+from . import brand, health, learning, watchlist
 from .config import DASHBOARD_HTML, STRATEGY, WEB_INDEX, Settings
 from .exits import decide
 from .ledger import Ledger, Position
@@ -133,12 +133,50 @@ tbody tr{transition:background .12s} tbody tr:hover{background:var(--panel2)}
 .dim{color:var(--dim)}
 
 /* -- chips -------------------------------------------------------------- */
+/* --- liveness and alerting ------------------------------------------- */
+/* The page is read by someone who assumes silence means calm. These are the
+   two places that assumption is checked: the heartbeat says the agent ran,
+   the alert block says what it found. */
+.hb{display:flex;flex-wrap:wrap;gap:6px 18px;margin:-8px 0 16px;font-size:12px;
+color:var(--dim)}
+.hb-item b{color:var(--ink2);font-weight:650;margin-right:5px}
+.hb-ok{color:var(--ink2);font-variant-numeric:tabular-nums}
+.hb-bad{color:var(--neg);font-weight:650;font-variant-numeric:tabular-nums}
+.alerts{margin-bottom:16px;border:1px solid var(--negln);border-radius:13px;
+background:var(--panel);overflow:hidden;box-shadow:var(--sh)}
+.ahead{background:var(--negbg);color:var(--neg);font-weight:700;font-size:11px;
+letter-spacing:.07em;text-transform:uppercase;padding:9px 15px;
+border-bottom:1px solid var(--negln)}
+.alert{padding:11px 15px;border-bottom:1px solid var(--line2);
+border-left:3px solid transparent}
+.alert:last-child{border-bottom:none}
+.alert.critical{border-left-color:var(--neg)}
+.alert.warning{border-left-color:var(--warn)}
+.alert.info{border-left-color:var(--accent)}
+.atitle{font-weight:650;color:var(--ink);font-size:13px}
+.alert.critical .atitle{color:var(--neg)}
+.alert.warning .atitle{color:var(--warn)}
+.adetail{color:var(--dim);font-size:12px;margin-top:3px;line-height:1.5}
+/* Mark age. Every P&L figure on a row is only as true as this. */
+.agemark{font-size:11px;margin-top:3px;font-variant-numeric:tabular-nums}
+.agemark.fresh{color:var(--dim)}
+.agemark.aging{color:var(--warn)}
+.agemark.stale,.agemark.never{color:var(--neg);font-weight:650}
+/* Distance from spot to the short strike. */
+.cush{font-weight:650;font-variant-numeric:tabular-nums}
+.cush.ok{color:var(--pos)}
+.cush.near{color:var(--warn)}
+.cush.tight{color:var(--warn)}
+.cush.breach{color:var(--neg)}
+.ksub{font-size:11px;color:var(--dim);font-weight:500;margin-top:3px;
+letter-spacing:0;text-transform:none}
 .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;
 background:var(--chip);color:var(--dim);border:1px solid var(--line);white-space:nowrap;
 font-weight:600}
 .tag.ok{color:var(--pos);border-color:var(--posln);background:var(--posbg)}
 .tag.blocked{color:var(--neg);border-color:var(--negln);background:var(--negbg)}
 .tag.act{color:var(--warn);border-color:var(--warnln);background:var(--warnbg)}
+.tag.stale{color:var(--neg);border-color:var(--negln);background:var(--negbg);margin-left:4px}
 .note{font-size:12px;color:var(--warn);padding:3px 0;line-height:1.45}
 .dte{display:inline-block;padding:1.5px 8px;border-radius:999px;font-size:11px;
 font-weight:650;background:var(--chip);border:1px solid var(--line);color:var(--dim);
@@ -291,10 +329,11 @@ def _e(x) -> str:
 
 
 def _sign(v: float, fmt: str = ",.0f", money: bool = True) -> str:
+    # The sign goes outside the currency symbol: "-$239.35", not "$-239.35".
+    # The second one reads as a typo on the number that matters most.
     cls = "pos" if v > 0 else ("neg" if v < 0 else "dim")
-    txt = f"{'$' if money else ''}{v:{fmt}}"
-    if v > 0:
-        txt = "+" + txt
+    mark = "+" if v > 0 else ("-" if v < 0 else "")
+    txt = f"{mark}{'$' if money else ''}{abs(v):{fmt}}"
     return f'<span class="{cls}">{txt}</span>'
 
 
@@ -362,30 +401,168 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
             f"<tbody>{body}</tbody></table></div>")
 
 
-def _positions_table(rows: list[Position], settings: Settings) -> str:
+def _mark_state(p: Position, sess: SessionState | None) -> tuple[str, str]:
+    """How much the price behind this row can be trusted, and how to say it.
+
+    Every headline number on the page -- net liq, unrealised P&L, cost to close,
+    % of max credit -- is a function of one mark per position. A mark from
+    ninety seconds ago and one from three days ago used to render in the same
+    typeface. This is the difference.
+    """
+    age = p.mark_age_minutes
+    if age is None:
+        return "never", "never marked \u00b7 showing the fill"
+    if age < 90:
+        txt = f"marked {age:.0f}m ago"
+    elif age < 60 * 36:
+        txt = f"marked {age / 60:.0f}h ago"
+    else:
+        txt = f"marked {age / 1440:.0f}d ago"
+    trading = bool(sess and sess.is_open)
+    if trading and age > health.MARK_MISSING_AFTER_MIN:
+        return "stale", txt
+    if age > 60 * 24:
+        return "stale", txt
+    if trading and age > health.MARK_INTERVAL_MIN * 1.5:
+        return "aging", txt
+    return "fresh", txt
+
+
+def _cushion_cell(p: Position) -> str:
+    """Distance from spot to the short strike -- the number that says whether
+    this position is comfortable or already being tested.
+
+    An unknown cushion must not render like a wide one, so a position with no
+    spot gets an explicit dash rather than a zero.
+    """
+    c = p.cushion
+    if c is None:
+        return '<span class="dim">no spot</span>'
+    if c < 0:
+        cls, note = "cush breach", "through it"
+    elif c < 0.02:
+        cls, note = "cush tight", "under 2%"
+    elif c < 0.05:
+        cls, note = "cush near", "narrowing"
+    else:
+        cls, note = "cush ok", ""
+    return (f'<span class="{cls}">{c:+.1%}</span>'
+            + (f'<div class="dim" style="font-size:11px">{_e(note)}</div>' if note else ""))
+
+
+def _exit_pill(p: Position, d, mark: str, sess: SessionState | None,
+               settings: Settings) -> str:
+    """What is actually going to happen to this position, not what would.
+
+    The page used to render one amber pill for every decision that said "act",
+    which is the same pill whether the agent closed it, held it because the
+    market is shut, or never decided at all because the mark was stale. Those
+    are three different amounts of trouble.
+    """
+    if mark in ("stale", "never"):
+        return ('<span class="tag stale">NOT DECIDED</span>'
+                '<div class="note">the mark behind this row is stale, so no exit '
+                'rule was evaluated on it. Nothing will fire until it re-prices.</div>')
+    if not d.act:
+        return f'<span class="tag">{_e(d.headline)}</span>' if d.reason else ""
+    if settings.mode != "paper" or not settings.auto_exit:
+        why = ("live mode -- a close is an order for you to place"
+               if settings.mode != "paper" else "auto-exit is off")
+        return (f'<span class="tag act">{_e(d.headline)}</span>'
+                f'<span class="tag stale">NEEDS YOU</span>'
+                f'<div class="note">{_e(why)} &mdash; the agent will not close this.</div>')
+    if sess is not None and not sess.is_open:
+        return (f'<span class="tag act">{_e(d.headline)}</span>'
+                f'<span class="tag stale">HELD</span>'
+                f'<div class="note">due, but the market is '
+                f'{_e(sess.phase)} &mdash; it fires on the next mark after the open. '
+                f'Still open, still moving.</div>')
+    return (f'<span class="tag act">{_e(d.headline)}</span>'
+            '<div class="note">the agent closes this on the next mark.</div>')
+
+
+def _alerts_panel(alerts: list) -> str:
+    """The push list, rendered where a pull-only reader will see it first.
+
+    These are the states the operator asked to be TOLD about. Until there is a
+    delivery channel this is the honest half: they are at least impossible to
+    miss on the page instead of buried in a column.
+    """
+    if not alerts:
+        return ""
+    rows = "".join(
+        f'<div class="alert {a.severity}"><div class="atitle">{_e(a.title)}</div>'
+        f'<div class="adetail">{_e(a.detail)}</div></div>' for a in alerts)
+    n_crit = sum(1 for a in alerts if a.severity == health.CRITICAL)
+    head = (f"{n_crit} thing(s) need you" if n_crit
+            else f"{len(alerts)} thing(s) worth knowing")
+    return f'<div class="alerts"><div class="ahead">{_e(head)}</div>{rows}</div>'
+
+
+def _heartbeat(led: Ledger, hb: health.Health, sess: SessionState) -> str:
+    """Is the agent running? A dead scheduler and a quiet market render the
+    same flat book, so the page has to say which one it is looking at."""
+    bits = []
+    for kind, label in (("mark", "marks"), ("propose", "propose"), ("watch", "watch")):
+        run = hb.last(kind)
+        n = hb.runs_today(kind)
+        if run is None:
+            bits.append(f'<span class="hb-item"><b>{label}</b> '
+                        f'<span class="hb-bad">never run</span></span>')
+            continue
+        age = run.when and (dt.datetime.now() - run.when).total_seconds() / 60
+        if age is None:
+            when = run.at
+        elif age < 90:
+            when = f"{age:.0f}m ago"
+        elif age < 60 * 36:
+            when = f"{age / 60:.0f}h ago"
+        else:
+            when = f"{age / 1440:.0f}d ago"
+        bad = (kind == "mark" and sess.is_open and led.open_positions
+               and age is not None and age > health.MARK_MISSING_AFTER_MIN)
+        cls = "hb-bad" if bad else "hb-ok"
+        bits.append(f'<span class="hb-item"><b>{label}</b> '
+                    f'<span class="{cls}">{_e(when)}</span>'
+                    f'<span class="dim"> &middot; {n} today</span></span>')
+    return f'<div class="hb">{"".join(bits)}</div>'
+
+
+def _positions_table(rows: list[Position], settings: Settings,
+                     sess: SessionState | None = None) -> str:
     if not rows:
         return '<div class="empty">No open positions.</div>'
     out = []
     for p in rows:
         d = decide(p, settings)
-        note = d.reason
-        tag = (f'<span class="tag act">{_e(d.headline)}</span>'
-               if d.act else (f'<span class="tag">{_e(d.headline)}</span>' if note else ""))
+        mark, age_txt = _mark_state(p, sess)
+        pill = _exit_pill(p, d, mark, sess, settings)
+        note = d.reason if (d.reason and mark not in ("stale", "never")) else ""
+        spot = (f"${p.mark_spot:,.2f}" if p.mark_spot
+                else '<span class="dim">&mdash;</span>')
+        be_gap = ((p.mark_spot - p.breakeven) / p.mark_spot) if p.mark_spot else None
         out.append([
             f"<b>{_e(p.symbol)}</b>"
             f"<div class='dim' style='font-size:11px'>{_e(p.sector)}</div>",
             f"{p.short_strike:g}/{p.long_strike:g}p",
             _expiry_cell(p.expiration, p.dte),
             f"{p.contracts}",
+            f'{spot}<div class="agemark {mark}">{_e(age_txt)}</div>',
+            _cushion_cell(p),
+            f"${p.breakeven:,.2f}"
+            + (f'<div class="dim" style="font-size:11px">{be_gap:+.1%} away</div>'
+               if be_gap is not None else ""),
             f"${p.credit_dollars:,.0f}",
             f"${p.collateral:,.0f}",
-            f"${p.mark_cost_to_close * 100 * p.contracts:,.0f}",
+            f"${p.mark_cost_to_close * 100 * p.contracts:,.0f}"
+            '<div class="dim" style="font-size:11px">modelled mid</div>',
             _sign(p.open_pl),
-            f"{p.pct_of_max_credit:.0%} {tag}"
+            f"{p.pct_of_max_credit:.0%} {pill}"
             + (f"<div class='note'>{_e(note)}</div>" if note else ""),
         ])
-    return _table(["ticker", "spread", "expiration", "qty", "credit",
-                   "collateral", "cost to close", "P&L", "% of max credit"], out)
+    return _table(["ticker", "spread", "expiration", "qty", "spot", "to short",
+                   "breakeven", "credit", "collateral", "cost to close", "P&L",
+                   "status"], out)
 
 
 def _closed_table(rows: list[Position]) -> str:
@@ -464,11 +641,30 @@ def _event_line(e: dict) -> str:
             f"<span>{detail}</span></div>")
 
 
+# `marked` is written on every mark run -- about 26 a day -- and the log is
+# rendered newest-first and unpaginated. Left in, the two rows anyone actually
+# opens this tab for are off the bottom of the screen inside a week. They stay
+# in the ledger, which is the audit trail; they are just not the headline.
+_NOISY_EVENTS = {"marked"}
+_LOG_LIMIT = 250
+
+
 def _history_panel(led: Ledger) -> str:
-    """Closed positions plus the raw event log, newest first."""
-    events = list(reversed(led.events))
-    log = ("".join(_event_line(e) for e in events) if events
+    """Closed positions plus the event log, newest first."""
+    events = [e for e in reversed(led.events)
+              if e.get("kind") not in _NOISY_EVENTS]
+    hidden = len(led.events) - len(events)
+    shown, clipped = events[:_LOG_LIMIT], max(0, len(events) - _LOG_LIMIT)
+    log = ("".join(_event_line(e) for e in shown) if shown
            else '<div class="empty">No events yet.</div>')
+    foot = []
+    if hidden:
+        foot.append(f"{hidden:,} routine <code>marked</code> event(s) hidden")
+    if clipped:
+        foot.append(f"{clipped:,} older event(s) not shown")
+    footer = (f'<div class="devf">{" &middot; ".join(foot)} &mdash; the full record '
+              f'is in <code>data/ledger.json</code>.</div>' if foot else "")
+
     closed = led.closed_positions
     wins = [p for p in closed if p.realized_pl > 0]
     summary = ""
@@ -476,22 +672,38 @@ def _history_panel(led: Ledger) -> str:
         gross_win = sum(p.realized_pl for p in wins)
         gross_loss = sum(p.realized_pl for p in closed if p.realized_pl <= 0)
         avg = led.realized_pl / len(closed)
+        # An 80% win rate can be eight trades booked at 20% of max credit and
+        # two stopped at 2x -- a net loser presented as healthy. Capture is the
+        # number that tells those apart, so it sits next to the win rate.
+        cap = [p.realized_pl / p.credit_dollars for p in closed if p.credit_dollars]
+        avg_cap = sum(cap) / len(cap) if cap else 0.0
+        reasons: dict[str, int] = {}
+        for p in closed:
+            reasons[p.close_reason or "unknown"] = reasons.get(p.close_reason or "unknown", 0) + 1
+        reason_txt = ", ".join(f"{k.replace('_', ' ')} x{v}"
+                               for k, v in sorted(reasons.items(), key=lambda kv: -kv[1]))
         summary = (
             f'<div class="cards" style="margin-bottom:8px">'
             f'<div class="card"><div class="k">closed trades</div>'
             f'<div class="v">{len(closed)}</div></div>'
             f'<div class="card"><div class="k">win rate</div>'
             f'<div class="v">{len(wins) / len(closed):.0%}</div></div>'
+            f'<div class="card {_pl_class(avg_cap)}"><div class="k">avg credit capture</div>'
+            f'<div class="v">{_sign(avg_cap * 100, ".0f", money=False)}%</div></div>'
             f'<div class="card"><div class="k">realized P&amp;L</div>'
             f'<div class="v">{_sign(led.realized_pl, ",.2f")}</div></div>'
             f'<div class="card"><div class="k">average per trade</div>'
             f'<div class="v">{_sign(avg, ",.2f")}</div></div>'
             f'<div class="card"><div class="k">won / lost</div>'
             f'<div class="v">{_sign(gross_win, ",.0f")} / {_sign(gross_loss, ",.0f")}</div></div>'
-            f"</div>")
+            f"</div>"
+            f'<div class="rules" style="margin-bottom:14px"><ul><li><b>How they '
+            f'ended:</b> {_e(reason_txt)}. Capture is realised P&amp;L over credit '
+            f'taken in &mdash; a high win rate at low capture and a few full-size '
+            f'stops is a losing book that reads as a winning one.</li></ul></div>')
     return (f"{summary}<h2>Closed positions</h2>{_closed_table(closed)}"
             f"<h2>Event log &mdash; every action, newest first</h2>"
-            f'<div class="rules">{log}</div>')
+            f'<div class="rules">{log}</div>{footer}')
 
 
 def _ready_pill(led: Ledger, settings: Settings) -> str:
@@ -596,17 +808,27 @@ def _watchlist_panel() -> str:
             prem = (f'<b>${e.credit_dollars:,.0f}</b>'
                     f'<span class="sub">nat ${e.credit_nat_dollars:,.0f}</span>')
             rate = f'<b>{e.roc:.1%}</b><span class="sub">on ${e.collateral:,.0f}</span>'
-            cush = f"{e.cushion:.1%}"
+            # Cushion is how far out of the money it is; pop_est is the model's
+            # odds of keeping the whole credit. Both were computed; only one was
+            # shown, and the one shown says nothing about likelihood.
+            cush = (f'<b>{e.cushion:.1%}</b>'
+                    + (f'<span class="sub">{e.pop_est:.0%} est. win</span>'
+                       if e.pop_est is not None else
+                       '<span class="sub">no POP estimate</span>'))
             exp = _expiry_cell(e.expiration, e.dte)
         else:
             spread = prem = rate = cush = exp = '<span class="sub">&mdash;</span>'
+        # "EARNINGS" alone is unanswerable: tomorrow and in three weeks are the
+        # difference between waiting and dropping the name for this cycle.
+        earn = (f'<span class="exp">{_e(e.earnings_date)}</span>' if e.earnings_date
+                else '<span class="sub">unknown</span>')
         rows.append([
             f'<b>{_e(e.symbol)}</b><span class="sub">{_e(e.sector)}</span>',
-            sig, spread, exp, prem, rate, cush,
+            sig, spread, exp, prem, rate, cush, earn,
             f'{e.pct_off_high:.0%}<span class="sub">{e.pct_from_dma50:+.1%} vs 50dma</span>',
         ])
     table = _table(["ticker", "signal", "strikes", "expiry", "premium", "rate",
-                    "cushion", "off high"], rows)
+                    "cushion", "earnings", "off high"], rows)
     return f'<div class="wpills">{pills}</div>{bench_note}{banner}{table}'
 
 
@@ -748,12 +970,27 @@ def render(led: Ledger, props: list[Proposal], settings: Settings,
                         f"no path to placing a live order at all.")
         pending_txt = "opened automatically on the next run"
     sectors = ", ".join(f"{k} x{v}" for k, v in sorted(led.sector_counts().items())) or "none"
+    hb = health.load()
+    alerts = health.alerts(led, settings, hb, sess)
+
+    # Worst case as a fraction of the account, not just as a dollar amount.
+    # "$1,953 at risk" and "65% of everything you have" are the same number and
+    # only one of them is read as a warning.
+    risk_pct = (led.collateral_held / led.net_liq) if led.net_liq else 0.0
+    # Return on collateral deployed, which is the base a defined-risk premium
+    # seller actually earns on. Total return on starting cash renders $0.24 of
+    # fees as -0.01% in red, which is noise wearing the colour of a loss.
+    roc = (led.realized_pl / led.starting_cash) if led.starting_cash else 0.0
     cards = [
         ("net liquidation", f"${led.net_liq:,.2f}", ""),
         ("cash", f"${led.cash:,.2f}", ""),
-        ("collateral at risk", f"${led.collateral_held:,.0f}", "c-warn"),
+        ("collateral at risk", f"${led.collateral_held:,.0f}"
+         f'<div class="ksub">{risk_pct:.0%} of net liq</div>',
+         "c-neg" if risk_pct > 0.5 else "c-warn"),
         ("available balance", f"${led.buying_power:,.2f}", "c-info"),
-        ("realized P&amp;L", _sign(led.realized_pl, ",.2f"), _pl_class(led.realized_pl)),
+        ("realized P&amp;L", _sign(led.realized_pl, ",.2f")
+         + f'<div class="ksub">{roc:+.1%} on starting cash</div>',
+         _pl_class(led.realized_pl)),
         ("unrealized P&amp;L", _sign(led.unrealized_pl, ",.2f"), _pl_class(led.unrealized_pl)),
         ("total return", _sign(led.total_return * 100, ".2f", money=False) + "%",
          _pl_class(led.total_return)),
@@ -781,6 +1018,7 @@ and dark palette" title="Light / dark">&#9681;</button></div>
 <div class="sub">{_e(settings.account_label)} &middot; mode <b>{_e(led.mode)}</b> &middot;
 opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H:%M}</div>
 <div class="banner">{_e(sess.banner)}</div>
+{_heartbeat(led, hb, sess)}
 
 <div class="tabs" role="tablist">
 <button role="tab" aria-selected="true" data-t="now">Positions</button>
@@ -796,6 +1034,7 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 </div>
 
 <section class="panel" id="p-now">
+{_alerts_panel(alerts)}
 <div class="cards">{card_html}</div>
 
 <h2>Portfolio limits</h2>
@@ -804,6 +1043,12 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 ${settings.max_total_collateral:,.0f} cap ({used_pct:.0%} used)</li>
 <li>Open positions: <b>{len(led.open_positions)}</b> of {settings.max_open_positions}
 &middot; max {settings.max_positions_per_sector} per sector &middot; currently: {_e(sectors)}</li>
+<li>Worst case: if every open spread went to max loss the account would lose
+<b>${led.collateral_held:,.0f}</b>, which is <b>{risk_pct:.0%}</b> of a
+${led.net_liq:,.0f} net liq, across {len(led.open_positions)} position(s) in
+{len(led.sector_counts())} GICS sector(s). The sector cap counts labels, not
+correlation &mdash; four large-cap tech names in two sectors pass it and still
+move together on one bad index day.</li>
 <li>Available balance: <b>${led.buying_power:,.2f}</b> (cash ${led.cash:,.2f} less
 ${led.capital_at_risk:,.0f} of capital at risk). Nothing opens that needs more free
 balance than this &mdash; the account can always pay its own max loss.</li>
@@ -812,7 +1057,7 @@ ${eff.min_credit_per_trade:,.0f}{max_credit_txt}{dev_flag}</li>
 </ul></div>
 
 <h2>Open positions</h2>
-{_positions_table(led.open_positions, settings)}
+{_positions_table(led.open_positions, settings, sess)}
 
 <h2>Pending proposals &mdash; {pending_txt}</h2>
 {_proposals_table(props)}
