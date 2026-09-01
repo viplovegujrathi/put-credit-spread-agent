@@ -11,14 +11,18 @@
 # other deploy scripts and so the file permissions are fixed up afterwards --
 # the login service reads /etc/pcs/viewers as the pcs user.
 #
-# Every login sees the SAME page. There is no admin tier and no per-user view:
-# nginx serves one static file and the only dynamic endpoint is the login
-# itself, so a viewer can read the account and do nothing else -- not approve a
-# trade, not change a setting, not reach the agent.
+# Every login sees the SAME page. There is no admin tier and no per-user view,
+# so anything reachable from the page is reachable by EVERYONE you add here.
 #
-# What they WILL see: the account label, cash, positions, every closed trade
-# and the full event log. That is a paper account, but decide it is fine to
-# share before you share it -- there is no redaction mode.
+# What they can READ: the account label, cash, every position, every closed
+# trade and the full event log. That is a paper account, but decide it is fine
+# to share before you share it -- there is no redaction mode.
+#
+# What they can CHANGE: only the settings in config.DASHBOARD_SETTABLE, which
+# today is max_open_positions, within its stated bounds. Nothing reachable from
+# a browser can arm trading or waive the per-trade human approval gate --
+# paper_trading, auto_approve, mode and starting_cash are deliberately off that
+# list. A viewer still cannot approve a trade or reach the agent.
 set -euo pipefail
 
 APP=/opt/pcs

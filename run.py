@@ -817,13 +817,17 @@ def cmd_viewer(args, settings: Settings) -> int:
     """Dashboard logins. Add, rotate, list, revoke.
 
     Every login sees the SAME page. There is no admin tier and no per-user
-    view, because there is nothing to tier: nginx serves one static file and
-    the only dynamic endpoint is the login itself. A viewer can read the
-    account and can do nothing else -- not approve a trade, not change a
-    setting, not reach the agent.
+    view, so anything reachable from the page is reachable by everyone added
+    here.
 
     What they WILL see: the account label, cash, every position, every closed
     trade and the full event log. Decide that is fine to share before sharing.
+
+    What they can CHANGE: only config.DASHBOARD_SETTABLE -- today that is
+    max_open_positions, inside its bounds. paper_trading, auto_approve, mode
+    and starting_cash are deliberately off that list, so nothing reachable from
+    a browser can arm trading or waive the per-trade human approval gate. A
+    viewer still cannot approve a trade or reach the agent.
     """
     from pathlib import Path as _Path
 
