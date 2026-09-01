@@ -71,6 +71,7 @@ tradeable one.
 | `./run.py approve <id> --approver <name>` | The human gate. Fills into the paper ledger |
 | `./run.py config [--set k=v]` | View or change the configurable rules |
 | `./run.py reject <id> --reason "..."` | Record a decline |
+| `./run.py watch` | Refresh the watchlist. **Opens nothing**, so it runs 24/7 |
 | `./run.py mark` | Re-mark open positions, then **take any exit that is due** |
 | `./run.py mark --no-auto-exit` | Decide but do not execute — print the exits that are due |
 | `./run.py status` | Cash, collateral, available balance, net liq, open/closed |
@@ -176,6 +177,34 @@ exactly the positions with the thinnest collateral:
 
 `--no-auto-exit` decides without executing; `auto_exit: false` in
 `data/settings.json` makes that the default.
+
+---
+
+## The watchlist
+
+`./run.py watch` answers the question the proposal list cannot: *what is the
+agent looking at, and why has it not taken it?* Every tracked name carries the
+spread it would take — strikes, premium, rate on collateral, cushion — and a
+signal saying where it stands.
+
+| Signal | Meaning |
+|---|---|
+| `HOLDING` | Already open |
+| `READY` | Clears every rule — the next run opens it |
+| `BLOCKED` | The trade is fine; a **portfolio cap** is in the way |
+| `EARNINGS` | Earnings inside the window (unknown counts as inside) |
+| `NO_FIT` | Screened in, but nothing clears $100 at a safe cushion |
+| `NEAR` / `STRETCHED` | Near the setup, not in it |
+
+`BLOCKED` is the row worth having. A name the agent wants and cannot take is
+more informative than one it never considered, so it stays on the list **with
+its price attached** — you can see what the cap is costing you.
+
+This is the one job that runs **around the clock**. Watching is not trading:
+`pcs/watchlist.py` imports no broker and holds no ledger it can mutate, which
+is what makes an 02:00 refresh safe. The corollary is that it must never dress
+a stale quote as a tradeable premium, so every refresh records the session grade
+it was priced under and says so above the numbers.
 
 ---
 
@@ -289,6 +318,7 @@ pcs/
   optimizer.py     the strike search and every per-trade constraint
   risk.py          portfolio-level caps, the balance floor, correlation warnings
   exits.py         take-profit / stop-loss / defend decisions (pure policy)
+  watchlist.py     what is being tracked and why -- observation only, never opens
   ledger.py        paper account, positions, append-only event log
   paper_broker.py  the three open gates, fill simulation, marking, exit execution
   proposer.py      human-readable tickets

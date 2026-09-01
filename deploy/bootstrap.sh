@@ -114,7 +114,7 @@ done
 echo "  calendar expressions parse, in America/New_York"
 echo "  box clock left on $(timedatectl show -p Timezone --value)"
 systemctl daemon-reload
-systemctl enable --now pcs-mark.timer pcs-propose.timer
+systemctl enable --now pcs-mark.timer pcs-propose.timer pcs-watch.timer
 systemctl list-timers 'pcs-*' --no-pager | head -4
 echo "  ^ LEFT is what matters: propose fires 10:15 ET, i.e. 14:15 UTC in EDT."
 echo "    If NEXT reads 10:15 UTC the timezone did not take -- stop and say so."

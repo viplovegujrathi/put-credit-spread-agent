@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import html
 
+from . import watchlist
 from .config import DASHBOARD_HTML, STRATEGY, Settings
 from .exits import decide
 from .ledger import Ledger, Position
@@ -74,6 +75,22 @@ padding:16px 20px}
   letter-spacing:.02em}
 .devf{color:#93a0b4;font-size:12px;margin-top:8px}
 .devlink{color:#f0c85a;text-decoration:none;border-bottom:1px dotted #8a6a1f}
+.lede{color:#93a0b4;font-size:13px;margin:-4px 0 12px;max-width:64ch;line-height:1.5}
+.wpills{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:11px}
+.wpill{font-size:11px;letter-spacing:.04em;padding:4px 9px;border-radius:999px;
+  background:var(--panel);border:1px solid var(--line);color:#93a0b4}
+.wpill b{color:#e6edf6;margin-left:2px}
+.sig{font-size:10.5px;font-weight:650;letter-spacing:.05em;padding:3px 7px;
+  border-radius:5px;white-space:nowrap;cursor:help}
+.s-ready{background:#0f2e1b;color:#5fd48a;border:1px solid #1d5c37}
+.s-block{background:#2e2410;color:#e0aa4e;border:1px solid #6b5220}
+.s-hold {background:#10243d;color:#6aa9e9;border:1px solid #24507f}
+.s-earn {background:#2d1620;color:#e07a9a;border:1px solid #6b2f45}
+.s-nofit{background:#1b1f26;color:#8b98ab;border:1px solid #2b3240}
+.s-near {background:#1b1f26;color:#a9b4c4;border:1px solid #2b3240}
+.wnote{font-size:12px;color:#e0aa4e;background:#241d0d;border:1px solid #6b5220;
+  border-radius:8px;padding:8px 11px;margin-bottom:11px;line-height:1.5}
+.wnote.ok{color:#5fd48a;background:#0f2419;border-color:#1d5c37}
 .empty{color:var(--dim);padding:18px;background:var(--panel);
 border:1px solid var(--line);border-radius:11px;font-size:13px}
 code{background:#212936;padding:1.5px 6px;border-radius:4px;font-size:12px;
@@ -370,6 +387,68 @@ def _readiness_panel(led: Ledger, settings: Settings) -> str:
         f"a human places every real trade.</div></div>")
 
 
+_SIG_CLASS = {"HOLDING": "s-hold", "READY": "s-ready", "BLOCKED": "s-block",
+              "EARNINGS": "s-earn", "NO_FIT": "s-nofit", "NEAR": "s-near",
+              "STRETCHED": "s-near"}
+
+
+def _watch_pill() -> str:
+    wl = watchlist.load()
+    if wl is None:
+        return "0"
+    ready = wl.count("READY")
+    return str(ready) if ready else str(len(wl.entries))
+
+
+def _watchlist_panel() -> str:
+    """What the agent is watching. Read from disk so `watch` can refresh it on
+    its own schedule -- around the clock -- without any other command running."""
+    wl = watchlist.load()
+    if wl is None:
+        return ('<div class="rules"><ul><li>No watchlist yet. Build one with '
+                '<code>./run.py watch</code> &mdash; it never opens anything, so it '
+                'can run at any hour.</li></ul></div>')
+
+    counts = [(sig, wl.count(sig)) for sig in
+              ("READY", "BLOCKED", "EARNINGS", "NO_FIT", "NEAR", "STRETCHED")]
+    pills = "".join(
+        f'<span class="wpill {_SIG_CLASS.get(sig, "")}">{_e(sig.replace("_", " "))}'
+        f' <b>{n}</b></span>' for sig, n in counts if n)
+
+    # A stale premium is not a premium you can get. Say so above the numbers,
+    # not in a footnote under them.
+    if wl.tradeable:
+        banner = ('<div class="wnote ok">Priced on a live market '
+                  f'&mdash; refreshed {_e(wl.generated_at.replace("T", " "))}</div>')
+    else:
+        banner = (f'<div class="wnote">Priced on a {_e(wl.quote_quality.replace("_", " "))} '
+                  f'({_e(wl.phase)}) &mdash; these show where each name stands, '
+                  f'not what it would fill at. Refreshed '
+                  f'{_e(wl.generated_at.replace("T", " "))}.</div>')
+
+    rows = []
+    for e in wl.entries:
+        sig = (f'<span class="sig {_SIG_CLASS.get(e.signal, "")}" '
+               f'title="{_e(e.reason)}">{_e(e.signal.replace("_", " "))}</span>')
+        if e.has_spread:
+            spread = f"{e.short_strike:g}/{e.long_strike:g}p"
+            prem = (f'<b>${e.credit_dollars:,.0f}</b>'
+                    f'<span class="sub">nat ${e.credit_nat_dollars:,.0f}</span>')
+            rate = f'<b>{e.roc:.1%}</b><span class="sub">on ${e.collateral:,.0f}</span>'
+            cush = f"{e.cushion:.1%}"
+            exp = _expiry_cell(e.expiration, e.dte)
+        else:
+            spread = prem = rate = cush = exp = '<span class="sub">&mdash;</span>'
+        rows.append([
+            f'<b>{_e(e.symbol)}</b><span class="sub">{_e(e.sector)}</span>',
+            sig, spread, exp, prem, rate, cush,
+            f'{e.pct_off_high:.0%}<span class="sub">{e.pct_from_dma50:+.1%} vs 50dma</span>',
+        ])
+    table = _table(["ticker", "signal", "strikes", "expiry", "premium", "rate",
+                    "cushion", "off high"], rows)
+    return f'<div class="wpills">{pills}</div>{banner}{table}'
+
+
 def _deviations_panel(settings: Settings) -> str:
     """What this account has changed, stated as a change rather than as a rule.
 
@@ -439,6 +518,8 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 >{len(led.closed_positions)}</span></button>
 <button role="tab" aria-selected="false" data-t="ready">Go-live<span class="pill"
 >{_ready_pill(led, settings)}</span></button>
+<button role="tab" aria-selected="false" data-t="watch">Watchlist<span class="pill"
+>{_watch_pill()}</span></button>
 <button role="tab" aria-selected="false" data-t="rules">Rules</button>
 </div>
 
@@ -472,6 +553,14 @@ ${eff.min_credit_per_trade:,.0f}{max_credit_txt}{dev_flag}</li>
 <section class="panel" id="p-ready" hidden>
 <h2>Readiness to trade this live</h2>
 {_readiness_panel(led, settings)}
+</section>
+
+<section class="panel" id="p-watch" hidden>
+<h2>Watchlist</h2>
+<p class="lede">Names the agent is tracking, with the spread it would take and
+why it has not. Refreshed on its own schedule &mdash; watching is not trading,
+so this runs around the clock.</p>
+{_watchlist_panel()}
 </section>
 
 <section class="panel" id="p-rules" hidden>
@@ -509,7 +598,7 @@ nobody is watching. Closing only, paper only, never on a stale mark.</li>
   var tabs=[].slice.call(document.querySelectorAll('.tabs button'));
   function show(name){{
     tabs.forEach(function(b){{ b.setAttribute('aria-selected', b.dataset.t===name); }});
-    ['now','history','ready','rules'].forEach(function(n){{
+    ['now','history','watch','ready','rules'].forEach(function(n){{
       var el=document.getElementById('p-'+n);
       if(el) el.hidden = (n!==name);
     }});

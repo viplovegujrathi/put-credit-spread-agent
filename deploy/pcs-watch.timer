@@ -1,0 +1,17 @@
+[Unit]
+Description=Refresh the watchlist hourly, around the clock
+
+[Timer]
+# No market-hours window and no timezone, deliberately. This job only reads --
+# it screens, prices, and writes data/watchlist.json. Nothing it can do opens,
+# closes or sizes a real position, so there is no reason to confine it to the
+# session the way pcs-propose and pcs-mark are confined. Pricing a name at 02:00
+# tells you where it stands; the watchlist labels those quotes as a stale
+# snapshot rather than passing them off as fills.
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

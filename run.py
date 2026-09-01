@@ -34,6 +34,7 @@ from pcs import (
     screener,
     session,
     universe,
+    watchlist,
 )
 from pcs import ledger as ledger_mod
 from pcs.config import DATA_DIR, PROPOSALS_JSON, STRATEGY, Settings
@@ -430,6 +431,63 @@ def cmd_dashboard(args, settings: Settings) -> int:
     return 0
 
 
+def cmd_watch(args, settings: Settings) -> int:
+    """Refresh the watchlist. Observation only -- this never opens anything.
+
+    That is why it can run around the clock while `propose` cannot: pricing a
+    name at 02:00 tells you where it stands, filling one there does not.
+    """
+    res = pipeline.run_screen(settings, symbols=args.symbols, progress=_progress,
+                              cache_max_age_min=args.max_cache_age)
+    led = ledger_mod.Ledger.load(settings)
+    cands = pipeline.shortlist(res, include_tight=True)
+    sized = pipeline.size_candidates(cands, res, settings)
+    pipeline.apply_earnings(sized, res, settings)
+    wl = watchlist.build(res, sized, led, settings, contracts=args.contracts)
+
+    print(BAR)
+    print(f"WATCHLIST  {res.session.now_et:%Y-%m-%d %H:%M %Z}   {len(wl.entries)} name(s)")
+    print(f"{res.session.banner}")
+    if not wl.tradeable:
+        print("  ! prices below are a "
+              f"{wl.quote_quality.replace('_', ' ')}, not a live market -- they say "
+              "where a name stands, not what it would fill at")
+    print(BAR)
+
+    rows = [["ticker", "signal", "spread", "exp", "premium", "collat", "rate",
+             "cushion", "off-high"]]
+    for e in wl.entries:
+        rows.append([
+            e.symbol, e.signal,
+            f"{e.short_strike:g}/{e.long_strike:g}p" if e.has_spread else "-",
+            e.expiration[5:] if e.expiration else "-",
+            f"${e.credit_dollars:,.0f}" if e.has_spread else "-",
+            f"${e.collateral:,.0f}" if e.has_spread else "-",
+            f"{e.roc:.1%}" if e.has_spread else "-",
+            f"{e.cushion:.1%}" if e.has_spread else "-",
+            f"{e.pct_off_high:.0%}",
+        ])
+    w = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
+    for i, r in enumerate(rows):
+        print("  " + "  ".join(c.ljust(w[j]) for j, c in enumerate(r)))
+        if i == 0:
+            print("  " + "  ".join("-" * x for x in w))
+
+    for sig in (watchlist.READY, watchlist.BLOCKED, watchlist.NO_FIT):
+        n = wl.count(sig)
+        if n:
+            print(f"\n{sig} ({n}):")
+            for e in [x for x in wl.entries if x.signal == sig][:6]:
+                print(f"  {e.symbol:6} {e.reason}")
+                for b in e.blockers:
+                    print(f"         - {b}")
+
+    path = watchlist.save(wl)
+    print(f"\nsaved: {path}")
+    dashboard.render(led, proposer.load(), settings, res.session)
+    return 0
+
+
 # The knobs exposed on the CLI. Deliberately a curated list, not every field:
 # the fill model and the liquidity gates are how the paper account stays honest,
 # and they should be edited in the file with a reason, not flipped in passing.
@@ -637,6 +695,13 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("dashboard", help="rebuild dashboard.html")
     p.set_defaults(fn=cmd_dashboard)
+
+    p = sub.add_parser("watch", help="refresh the watchlist (never opens anything)")
+    p.add_argument("--symbols", nargs="*", help="limit to these tickers")
+    p.add_argument("--contracts", type=int, default=1)
+    p.add_argument("--max-cache-age", type=float, default=45.0, metavar="MIN",
+                   help="reuse cached price snapshots up to this old (default 45)")
+    p.set_defaults(fn=cmd_watch)
 
     p = sub.add_parser("config", help="view or change the configurable rules")
     p.add_argument("--set", action="append", metavar="KEY=VALUE",

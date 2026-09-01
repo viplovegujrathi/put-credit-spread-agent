@@ -3,6 +3,7 @@
 #
 #   pcs-refresh.sh propose   full screen + sizing + proposals   (slow, ~5 min)
 #   pcs-refresh.sh mark      re-price open positions, take due exits (fast)
+#   pcs-refresh.sh watch     refresh the watchlist -- observation only, any hour
 #
 # What `propose` does at the end depends on this account's configuration:
 #
@@ -28,6 +29,7 @@ mkdir -p "$APP/logs"
   case "$TASK" in
     propose) ./.venv/bin/python run.py propose ;;
     mark)    ./.venv/bin/python run.py mark ;;
+    watch)   ./.venv/bin/python run.py watch ;;
     screen)  ./.venv/bin/python run.py screen ;;
     *) echo "unknown task: $TASK" >&2; exit 64 ;;
   esac
