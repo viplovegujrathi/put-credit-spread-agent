@@ -90,29 +90,34 @@ install -o "$SVC_USER" -g "$SVC_USER" -m 0644 "$APP/dashboard.html" "$WEB/index.
 echo "  ledger + dashboard initialised"
 
 # --- 5. timers ------------------------------------------------------------
-# Every OnCalendar in this repo is written in market-local time, and DST is why
-# they are not written in UTC: the bell moves twice a year against UTC but never
-# against America/New_York. EC2 defaults to UTC, so this has to be set, not
-# assumed -- the timers otherwise fire ~4 hours before the market opens.
-say "timezone"
-CUR_TZ="$(timedatectl show -p Timezone --value)"
-if [ "$CUR_TZ" = "America/New_York" ]; then
-  echo "  already America/New_York"
-else
-  timedatectl set-timezone America/New_York
-  echo "  $CUR_TZ -> America/New_York"
-fi
-
 say "systemd"
 cp "$APP"/deploy/pcs-*.service "$APP"/deploy/pcs-*.timer /etc/systemd/system/
-for cal in 'Mon..Fri 10..15:05,20,35,50' 'Mon..Fri 09:35,50' 'Mon..Fri 10:15'; do
+# Every schedule here is market-local, because the bell moves against UTC twice
+# a year and never against America/New_York. The timezone rides in the calendar
+# spec so the box clock is left alone -- this box may not stay dedicated, and a
+# system-wide `timedatectl set-timezone` would silently move anything else that
+# is scheduled on it. Test the capability rather than parsing a version number.
+if ! systemd-analyze calendar 'Mon..Fri 10:15 America/New_York' >/dev/null 2>&1; then
+  die "this systemd cannot put a timezone in OnCalendar (needs v252+; this box has
+  $(systemctl --version | head -1)). The schedules are market-local, so either
+  upgrade systemd or set the box clock with
+      sudo timedatectl set-timezone America/New_York
+  -- but only if nothing else on this box schedules against UTC. Not doing it
+  for you: on a stock EC2 image the clock is UTC and these timers would then
+  fire about four hours before the market opens."
+fi
+for cal in 'Mon..Fri 10..15:05,20,35,50 America/New_York' \
+           'Mon..Fri 09:35,50 America/New_York' \
+           'Mon..Fri 10:15 America/New_York'; do
   systemd-analyze calendar "$cal" >/dev/null || die "bad OnCalendar: $cal"
 done
-echo "  calendar expressions parse"
+echo "  calendar expressions parse, in America/New_York"
+echo "  box clock left on $(timedatectl show -p Timezone --value)"
 systemctl daemon-reload
 systemctl enable --now pcs-mark.timer pcs-propose.timer
 systemctl list-timers 'pcs-*' --no-pager | head -4
-echo "  ^ these must read ET, and 09:35/10:15 must be MORNING of a weekday"
+echo "  ^ LEFT is what matters: propose fires 10:15 ET, i.e. 14:15 UTC in EDT."
+echo "    If NEXT reads 10:15 UTC the timezone did not take -- stop and say so."
 
 # Run from $APP: pytest resolves its rootdir from the working directory, and the
 # service account has no business being able to read wherever this was invoked.

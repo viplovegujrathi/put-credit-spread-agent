@@ -2,7 +2,11 @@
 Description=Mark positions every 15 minutes during US market hours
 
 [Timer]
-# Instance timezone is America/New_York, so this follows DST on its own.
+# The timezone is part of the calendar spec (systemd v252+), so these follow DST
+# on their own and the box clock stays on whatever it was -- UTC on a stock EC2
+# image. Putting it here rather than in `timedatectl` keeps the schedule a
+# property of this agent instead of a property of the machine, which matters the
+# moment anything else lands on the box.
 #
 # systemd repetition (`/N`) applies within ONE field, so a range that walks
 # across the hour boundary cannot be written as `09:35..15:55/15:00` -- the
@@ -10,8 +14,8 @@ Description=Mark positions every 15 minutes during US market hours
 # past every hour from 10:00 to 15:00, plus the 09:35 and 09:50 marks the first
 # rule cannot reach. Exits still gate on the real session clock in code, so a
 # firing outside regular hours is refused rather than acted on.
-OnCalendar=Mon..Fri 10..15:05,20,35,50
-OnCalendar=Mon..Fri 09:35,50
+OnCalendar=Mon..Fri 10..15:05,20,35,50 America/New_York
+OnCalendar=Mon..Fri 09:35,50 America/New_York
 Persistent=false
 AccuracySec=30s
 

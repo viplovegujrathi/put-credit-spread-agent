@@ -124,16 +124,18 @@ Two timers, doing different jobs:
   30-minute opening gate lifts, so proposals are sized on a live market instead
   of a closing snapshot.
 
-**Check the timezone first.** Every `OnCalendar` here is written in market-local
-time, deliberately: the bell moves against UTC twice a year and never against
-`America/New_York`. EC2 images default to UTC, where `10:15` means 06:15 ET and
-the agent would sit pre-market forever. `bootstrap.sh` sets this, but verify:
+**The schedules carry their own timezone.** Every `OnCalendar` here is written
+in market-local time, deliberately: the bell moves against UTC twice a year and
+never against `America/New_York`. Rather than setting the box clock, the zone
+rides in the calendar spec itself (`Mon..Fri 10:15 America/New_York`, systemd
+v252+), so the schedule is a property of this agent and not of the machine —
+which matters the moment anything else is scheduled on the same box. The box
+clock is left on whatever it was, normally UTC.
 
-```bash
-timedatectl | grep 'Time zone'
-```
+`bootstrap.sh` tests that capability before enabling anything and refuses to
+continue if systemd is too old, rather than quietly changing the machine.
 
-Then check the calendar expressions parse to the times you expect — this was written against the spec, not against a running systemd, and a
+Verify the expressions parse to the times you expect — this was written against the spec, not against a running systemd, and a
 malformed `OnCalendar` is accepted at load time and simply never fires:
 
 ```bash

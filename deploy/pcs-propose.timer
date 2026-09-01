@@ -4,7 +4,9 @@ Description=Build proposals once a day, after the opening range has settled
 [Timer]
 # 10:15 ET: the 30-minute opening gate has lifted and quotes grade "live",
 # so proposals are sized on a real market rather than a closing snapshot.
-OnCalendar=Mon..Fri 10:15
+# The timezone is part of the spec, so this tracks DST without touching the box
+# clock -- see pcs-mark.timer.
+OnCalendar=Mon..Fri 10:15 America/New_York
 Persistent=true
 AccuracySec=1m
 
