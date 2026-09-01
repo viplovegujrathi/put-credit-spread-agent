@@ -620,7 +620,11 @@ def cmd_watch(args, settings: Settings) -> int:
 _CONFIG_GROUPS = (
     ("Trading", (
         ("paper_trading", "master switch -- off means nothing opens at all"),
-        ("auto_approve", "off = the agent opens clear proposals itself (paper only)"),
+        # Read carefully before rewording: this said "off = the agent opens clear
+        # proposals itself", which is backwards, on the one setting that decides
+        # whether trades happen without a human looking at them.
+        ("auto_approve", "ON = the agent opens clear proposals itself, no human "
+                         "sign-off (paper only)"),
         ("auto_exit", "act on take-profit / stop decisions automatically"),
     )),
     ("Per-trade rules  (blank = use the skill's number)", (

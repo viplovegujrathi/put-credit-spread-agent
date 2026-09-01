@@ -14,7 +14,16 @@ set -euo pipefail
 APP=/opt/pcs
 WEB=/var/www/pcs
 SVC_USER=pcs
+# The domain is remembered outside $APP, because $APP is rsynced with --delete
+# and anything stored inside it would be erased by the next redeploy. Forgetting
+# PCS_DOMAIN on a re-run used to silently drop the entire web layer -- the
+# install still reported success, and the site kept serving the old config until
+# something restarted nginx.
+DOMAIN_FILE=/etc/pcs/domain
 DOMAIN="${PCS_DOMAIN:-}"
+if [ -z "$DOMAIN" ] && [ -r "$DOMAIN_FILE" ]; then
+  DOMAIN="$(cat "$DOMAIN_FILE")"
+fi
 SRC="${SRC:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
@@ -41,6 +50,14 @@ fi
 
 # --- 3. code --------------------------------------------------------------
 say "code -> $APP"
+# Running the INSTALLED copy rsyncs $APP onto itself, which quietly ships no new
+# code while looking exactly like a successful deploy. Redeploys run from the
+# clone; only the web-layer-only path is legitimate from here.
+if [ "$SRC" = "$APP" ]; then
+  warn "running from $APP -- no new code will be copied."
+  warn "To deploy a change, run bootstrap.sh from the git clone instead:"
+  warn "  cd ~/put-credit-spread-agent && git pull && sudo ./deploy/bootstrap.sh"
+fi
 mkdir -p "$APP" "$WEB"
 # --exclude keeps the box's own account state: a redeploy must never overwrite
 # the ledger with whatever happened to be on the laptop.
@@ -130,13 +147,17 @@ say "self-check"
 
 # --- 6. web ---------------------------------------------------------------
 if [ -z "$DOMAIN" ]; then
-  warn "PCS_DOMAIN not set -- skipping nginx."
-  warn "The dashboard is at $WEB/index.html. Serve it when you have a name:"
-  warn "  sudo PCS_DOMAIN=your.domain $APP/deploy/bootstrap.sh"
+  warn "PCS_DOMAIN not set and none remembered in $DOMAIN_FILE -- skipping nginx."
+  warn "The dashboard is at $WEB/index.html. Serve it when you have a name,"
+  warn "from the git clone so the code comes with it:"
+  warn "  sudo PCS_DOMAIN=your.domain ./deploy/bootstrap.sh"
+  warn "The domain is remembered after that, so later redeploys need no env var."
   exit 0
 fi
 
 say "nginx for $DOMAIN"
+install -d -m 0755 /etc/pcs
+printf '%s\n' "$DOMAIN" > "$DOMAIN_FILE"
 command -v nginx >/dev/null || apt-get install -y -qq nginx >/dev/null
 
 CONF=/etc/nginx/sites-available/pcs
