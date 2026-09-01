@@ -25,6 +25,7 @@ module. Update it in the same commit as the code it describes.
 | `pcs/session.py` | clock, holidays, quote-quality grade, the opening-range gate | anything that mutates |
 | `pcs/exits.py` | §1.7 exit **decisions** (take profit / stop / defend) — pure | ledger mutation |
 | `pcs/watchlist.py` | what is tracked and why it has not been taken — **observation only** | anything that opens; it must not import `paper_broker` |
+| `pcs/learning.py` | the journal: closed-trade outcomes, operational faults, symbol quarantines | anything that opens or closes; it never writes `Settings` |
 | `pcs/paper_broker.py` | the three open gates, simulated fills, marking, exit **execution** | exit policy |
 | `pcs/ledger.py` | cash, positions, append-only events, all account arithmetic | any policy |
 | `pcs/pipeline.py` | wiring: screen → shortlist → size → earnings → propose | new rules |
@@ -68,6 +69,15 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
   `deviations()` compares against.
 - Every refusal to open subclasses `paper_broker.OpenBlocked`, so a batch can
   catch one exception and still print the specific reason.
+- `pcs/learning.py` may bench a symbol and nothing else. It never writes
+  `Settings`, never touches `STRATEGY`, and never opens or closes a position.
+  A quarantine is one-directional — it can only remove a candidate — and it
+  expires on its own. See §16.
+- Anything written on the box by its own timers (`data/ledger.json`,
+  `data/watchlist.json`, `data/journal.json`, `data/settings.json`) must be in
+  BOTH `.gitignore` and the `rsync --delete` excludes in `deploy/bootstrap.sh`.
+  Missing either one means a redeploy silently replaces live state with a
+  laptop snapshot.
 
 ### Commands
 
@@ -81,6 +91,7 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
 ./run.py config                 # every knob + what has been changed from the mandate
 ./run.py config --set auto_approve=off --set max_collateral_per_trade=750
 ./run.py watch                  # refresh the watchlist -- opens nothing, runs 24/7
+./run.py learn                  # what the closed record supports + self-repair pass
 ./run.py status | dashboard
 ```
 
@@ -100,7 +111,12 @@ was deleted because it had drifted into saying things that were no longer true.
 - **Per-trade human approval is OFF** (`auto_approve = true`, paper only), so
   `./run.py propose` opens the clear proposals itself. `paper_trading` is on.
   Both are in `data/settings.json`; `./run.py config` prints the truth.
-- 123 tests, ruff clean.
+- Self-learning is on (`self_repair = true`). The journal is empty: 0 closed
+  trades against a floor of 8, so it reports "insufficient" and nothing else.
+- The dashboard defaults to a **light** palette with a header toggle for dark,
+  persisted per browser in `localStorage` under `pcs-theme`. It does not follow
+  `prefers-color-scheme` — see §17.
+- 179 tests, ruff clean.
 
 ---
 
@@ -470,3 +486,68 @@ for real, and holds at the fill because the market is shut.
   is never presented as a premium you could get
 - a name blocked by a portfolio cap stays on the watchlist **with its price**,
   rather than vanishing the way it does from the proposal list
+
+---
+
+## 16. What a trading agent may learn by itself, and what it may only suggest
+
+`pcs/learning.py` splits the agent's own record into two kinds of thing and
+treats them completely differently. The split is the design, not an
+implementation detail.
+
+**Trades produce suggestions.** Grouping 12 closed spreads by cushion at entry
+and moving `min_otm_cushion` toward whichever bucket won is not learning; it is
+fitting a rule to noise, and the account is what pays when the fit is wrong.
+So: no lesson under `learning_min_sample` (8) closed trades, no comparison
+unless both sides hold `learning_min_group` (4), and no finding unless the
+win-rate gap clears `learning_min_effect` (20 points). Every lesson prints its
+`config --set` line and stops there.
+
+`insufficient` is a first-class result. Returning an empty list would read on
+the dashboard as "nothing is wrong"; "we do not know yet" is a different
+statement and the true one for almost all of this agent's life.
+
+**Faults are repaired.** A symbol whose chain will not price is a bug, not a
+trading opinion, and benching it is safe for one specific reason: **there is no
+input to `self_repair` that makes the agent trade something it otherwise would
+not.** It can only shorten the candidate list. That asymmetry is what makes
+running it unattended defensible, and `test_self_repair_never_opens_or_closes_anything`
+plus `test_self_repair_never_touches_settings` are what keep it true.
+
+Two details that mattered:
+
+- A quarantine has to **expire on its own**, and expiry has to run even when
+  the book is empty. `cmd_mark` returns early with no open positions, so the
+  journal pass had to be lifted out into `_journal_pass()` and called on both
+  paths — otherwise an account that closed everything would keep its benched
+  names benched forever.
+- `open_blocked` faults are recorded and deliberately **not** counted toward a
+  bench. A refused fill is nearly always the portfolio caps working correctly;
+  benching the ticker for it would punish the symbol for the account being full.
+
+**What cannot be learned from is stated, not omitted.** `Position` never records
+% off the 52-week high, % from the 50dma, short delta, or IV at open, so those
+are unlearnable. `feature_gaps()` lists them on the dashboard, because "no
+signal from IV" and "IV was never written down" look identical on a page and
+mean opposite things.
+
+## 17. A dark dashboard is a preference, not a default
+
+The first dashboard was dark because it was built at night. It is read on a
+phone in daylight at least as often, so the palette is now light by default
+with a toggle in the header.
+
+It deliberately does **not** follow `prefers-color-scheme`. A phone on the
+system-wide dark schedule would flip the one view of a live account to a
+palette its owner did not choose, and the toggle already covers the case. The
+saved choice is applied by an inline script in `<head>` — after `<body>`
+renders it is too late and you get a flash of the wrong theme.
+
+The colour tokens are defined twice: the full palette on bare `:root`, and the
+dark overrides under `:root[data-theme="dark"]`. No colour has its only
+definition inside the dark block, so a token that is missing from the override
+degrades to its light value rather than to nothing.
+
+One real bug the rewrite fixed: `.tag` was defined twice — once for the brand
+tagline, once for the pill chips in tables — and the pill rules won, wrapping
+the tagline in a rounded box. Renamed to `.brandtag`.

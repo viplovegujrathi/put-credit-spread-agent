@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import html
 
-from . import watchlist
+from . import learning, watchlist
 from .config import DASHBOARD_HTML, STRATEGY, Settings
 from .exits import decide
 from .ledger import Ledger, Position
@@ -19,142 +19,290 @@ from .proposer import Proposal
 from .readiness import assess
 from .session import SessionState
 
+# The strategy in a mark: a price path falling, and the floor the long leg puts
+# under it. Inline SVG rather than a file -- the dashboard is one self-contained
+# page that gets copied to a web root, and an asset it could arrive without is a
+# broken image on the only view of the account.
+LOGO_SVG = """<svg class="logo" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+<rect width="32" height="32" rx="8.5" fill="url(#lg)"/>
+<rect width="32" height="32" rx="8.5" fill="url(#lv)"/>
+<path d="M5.5 8.5 L12 15 L16.5 11 L26.5 21" stroke="#fff" stroke-width="2.3"
+ stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M5.5 25.2 H26.5" stroke="#fff" stroke-opacity=".62" stroke-width="2.6"
+ stroke-linecap="round"/>
+<defs>
+<linearGradient id="lg" x1="0" y1="0" x2="30" y2="32" gradientUnits="userSpaceOnUse">
+<stop stop-color="#4b9bf5"/><stop offset="1" stop-color="#2ea55c"/></linearGradient>
+<linearGradient id="lv" x1="16" y1="0" x2="16" y2="32" gradientUnits="userSpaceOnUse">
+<stop stop-color="#fff" stop-opacity=".18"/><stop offset="1" stop-opacity=".12"/>
+</linearGradient>
+</defs></svg>"""
+
+
+def _favicon() -> str:
+    """Same mark, inlined as a data URI so the tab icon needs no second request."""
+    import urllib.parse
+    ico = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+           '<rect width="32" height="32" rx="8.5" fill="#2f7fe0"/>'
+           '<path d="M5.5 8.5 L12 15 L16.5 11 L26.5 21" stroke="#fff" stroke-width="2.6" '
+           'fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
+           '<path d="M5.5 25.2 H26.5" stroke="#fff" stroke-opacity=".65" '
+           'stroke-width="2.8" stroke-linecap="round"/></svg>')
+    return "data:image/svg+xml," + urllib.parse.quote(ico)
+
+
 CSS = """
-:root{--bg:#0b0e13;--panel:#141922;--panel2:#1a202b;--line:#242c38;--ink:#e9edf3;
---dim:#8792a4;--pos:#3fb950;--neg:#f85149;--warn:#d29922;--accent:#58a6ff}
+/* Light by default. The dark palette is a deliberate opt-in via the header
+   toggle, not the system preference -- this page is read on a phone in a
+   bright room as often as at a desk at night, and guessing wrong on the one
+   view of a live account is worse than making it one click. */
+:root{
+--bg:#f4f7fc; --bg2:#eef3fb;
+--panel:#ffffff; --panel2:#fafcff; --head:#f3f6fc;
+--line:#e2e8f2; --line2:#eef2f8;
+--ink:#101828; --ink2:#344054; --dim:#68758a;
+--pos:#0b8f4e; --posbg:#e8f7ef; --posln:#b6e5cb;
+--neg:#d0342c; --negbg:#fdedec; --negln:#f6c9c6;
+--warn:#a35c05; --warnbg:#fff5e6; --warnln:#f2d9a8;
+--accent:#2f6bed; --accbg:#eaf0fe; --accln:#c3d5fb;
+--info:#7a3fd6; --infobg:#f3ecfe; --infoln:#ddc9f8;
+--pink:#c0316f; --pinkbg:#fdecf3; --pinkln:#f6c6da;
+--chip:#f0f4fa;
+--sh:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.05);
+--sh2:0 4px 14px rgba(16,24,40,.07),0 1px 3px rgba(16,24,40,.05);
+--glow1:rgba(47,107,237,.10); --glow2:rgba(11,143,78,.09); --glow3:rgba(122,63,214,.07);
+}
+:root[data-theme="dark"]{
+--bg:#0b0e14; --bg2:#0e131b;
+--panel:#151a23; --panel2:#1a212c; --head:#121821;
+--line:#242c39; --line2:#1c2330;
+--ink:#e9edf4; --ink2:#c3cddb; --dim:#8794a7;
+--pos:#4ac26b; --posbg:rgba(74,194,107,.10); --posln:#215a35;
+--neg:#f4726a; --negbg:rgba(244,114,106,.10); --negln:#5e2a28;
+--warn:#e0a63c; --warnbg:rgba(224,166,60,.10); --warnln:#5d451a;
+--accent:#5c9bff; --accbg:rgba(92,155,255,.11); --accln:#27456f;
+--info:#b189f5; --infobg:rgba(177,137,245,.11); --infoln:#432f66;
+--pink:#ef82ab; --pinkbg:rgba(239,130,171,.11); --pinkln:#632c44;
+--chip:#1e2532;
+--sh:0 1px 2px rgba(0,0,0,.4); --sh2:0 6px 20px rgba(0,0,0,.42);
+--glow1:rgba(92,155,255,.10); --glow2:rgba(74,194,107,.06); --glow3:rgba(177,137,245,.06);
+}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;
 font:14px/1.55 ui-sans-serif,-apple-system,"SF Pro Text",Segoe UI,Inter,sans-serif;
-background-image:radial-gradient(900px 380px at 15% -8%,rgba(88,166,255,.09),transparent),
-radial-gradient(700px 320px at 92% -4%,rgba(63,185,80,.06),transparent)}
-.wrap{max-width:1180px;margin:0 auto;padding:30px 20px 70px}
-h1{font-size:21px;margin:0 0 5px;letter-spacing:-.015em}
-h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);
-margin:30px 0 12px;font-weight:600}
-.sub{color:var(--dim);font-size:13px;margin-bottom:18px}
-.banner{background:linear-gradient(90deg,rgba(210,153,34,.13),rgba(210,153,34,.03));
-border-left:3px solid var(--warn);padding:11px 15px;border-radius:0 8px 8px 0;
-margin:16px 0;color:#dfe4ec;font-size:13px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(152px,1fr));gap:11px}
-.card{background:linear-gradient(180deg,var(--panel2),var(--panel));
-border:1px solid var(--line);border-radius:11px;padding:15px 16px;
-transition:border-color .15s,transform .15s}
-.card:hover{border-color:#313d4e;transform:translateY(-1px)}
-.card .k{color:var(--dim);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
-font-weight:600}
-.card .v{font-size:22px;margin-top:6px;font-variant-numeric:tabular-nums;
-letter-spacing:-.02em}
-.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+background-image:
+radial-gradient(820px 420px at 8% -10%,var(--glow1),transparent 70%),
+radial-gradient(700px 380px at 96% -6%,var(--glow2),transparent 70%),
+radial-gradient(760px 460px at 55% 110%,var(--glow3),transparent 70%);
+background-attachment:fixed}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 72px}
+
+/* -- header ------------------------------------------------------------- */
+.top{display:flex;align-items:center;gap:14px;margin-bottom:7px}
+.brand{display:flex;align-items:center;gap:13px;min-width:0}
+.logo{width:42px;height:42px;flex:none;border-radius:11px;
+box-shadow:0 4px 14px rgba(47,107,237,.28),0 0 0 1px rgba(255,255,255,.14) inset}
+.brandtext{min-width:0}
+h1{font-size:21px;margin:0 0 4px;letter-spacing:-.025em;line-height:1.2;font-weight:680;
+background:linear-gradient(96deg,var(--ink),var(--accent) 165%);
+-webkit-background-clip:text;background-clip:text;color:transparent}
+.brandtag{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
+font-weight:700}
+.themer{margin-left:auto;flex:none;appearance:none;cursor:pointer;width:34px;height:34px;
+border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--dim);
+box-shadow:var(--sh);font-size:15px;line-height:1;display:grid;place-items:center;
+transition:color .15s,border-color .15s,transform .15s}
+.themer:hover{color:var(--accent);border-color:var(--accln);transform:translateY(-1px)}
+h2{font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+margin:30px 0 12px;font-weight:700}
+.sub{color:var(--dim);font-size:13px;margin-bottom:16px}
+.sub b{color:var(--ink2);font-weight:650}
+.banner{background:linear-gradient(92deg,var(--warnbg),transparent 78%);
+border:1px solid var(--warnln);border-left:3px solid var(--warn);
+padding:11px 15px;border-radius:4px 10px 10px 4px;margin:16px 0;color:var(--ink2);
+font-size:13px}
+
+/* -- stat cards --------------------------------------------------------- */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px}
+.card{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));
+border:1px solid var(--line);border-radius:13px;padding:15px 16px;box-shadow:var(--sh);
+overflow:hidden;transition:box-shadow .16s,transform .16s,border-color .16s}
+.card::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;
+background:linear-gradient(90deg,var(--accent),transparent 88%);opacity:.85}
+.card.c-pos::before{background:linear-gradient(90deg,var(--pos),transparent 88%)}
+.card.c-neg::before{background:linear-gradient(90deg,var(--neg),transparent 88%)}
+.card.c-warn::before{background:linear-gradient(90deg,var(--warn),transparent 88%)}
+.card.c-info::before{background:linear-gradient(90deg,var(--info),transparent 88%)}
+.card:hover{box-shadow:var(--sh2);transform:translateY(-2px);border-color:var(--accln)}
+.card .k{color:var(--dim);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+font-weight:700}
+.card .v{font-size:23px;margin-top:6px;font-variant-numeric:tabular-nums;
+letter-spacing:-.025em;font-weight:620;color:var(--ink)}
+
+/* -- tables ------------------------------------------------------------- */
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:13px}
 table{width:100%;min-width:760px;border-collapse:separate;border-spacing:0;
-background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden}
-th{text-align:left;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
-color:var(--dim);padding:11px 13px;background:#11161e;
-border-bottom:1px solid var(--line);font-weight:600;white-space:nowrap}
-td{padding:11px 13px;border-bottom:1px solid #1b212b;font-variant-numeric:tabular-nums;
-vertical-align:top}
+background:var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden;
+box-shadow:var(--sh)}
+th{text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+color:var(--dim);padding:11px 13px;background:var(--head);
+border-bottom:1px solid var(--line);font-weight:700;white-space:nowrap}
+td{padding:11px 13px;border-bottom:1px solid var(--line2);
+font-variant-numeric:tabular-nums;vertical-align:top;color:var(--ink2)}
 tbody tr:last-child td{border-bottom:none}
-tbody tr{transition:background .12s} tbody tr:hover{background:#171d27}
-.pos{color:var(--pos)} .neg{color:var(--neg)} .dim{color:var(--dim)}
+tbody tr{transition:background .12s} tbody tr:hover{background:var(--panel2)}
+.pos{color:var(--pos);font-weight:600} .neg{color:var(--neg);font-weight:600}
+.dim{color:var(--dim)}
+
+/* -- chips -------------------------------------------------------------- */
 .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;
-background:#212936;color:var(--dim);border:1px solid var(--line);white-space:nowrap}
-.tag.ok{color:var(--pos);border-color:#20402a;background:rgba(63,185,80,.09)}
-.tag.blocked{color:var(--neg);border-color:#4a2224;background:rgba(248,81,73,.09)}
-.tag.act{color:var(--warn);border-color:#463a17;background:rgba(210,153,34,.1)}
+background:var(--chip);color:var(--dim);border:1px solid var(--line);white-space:nowrap;
+font-weight:600}
+.tag.ok{color:var(--pos);border-color:var(--posln);background:var(--posbg)}
+.tag.blocked{color:var(--neg);border-color:var(--negln);background:var(--negbg)}
+.tag.act{color:var(--warn);border-color:var(--warnln);background:var(--warnbg)}
 .note{font-size:12px;color:var(--warn);padding:3px 0;line-height:1.45}
 .dte{display:inline-block;padding:1.5px 8px;border-radius:999px;font-size:11px;
-font-weight:600;background:#212936;border:1px solid var(--line);color:var(--dim);
+font-weight:650;background:var(--chip);border:1px solid var(--line);color:var(--dim);
 white-space:nowrap}
-.dte.soon{color:var(--warn);border-color:#463a17;background:rgba(210,153,34,.11)}
-.dte.now{color:var(--neg);border-color:#4a2224;background:rgba(248,81,73,.11)}
+.dte.soon{color:var(--warn);border-color:var(--warnln);background:var(--warnbg)}
+.dte.now{color:var(--neg);border-color:var(--negln);background:var(--negbg)}
 .exp{font-variant-numeric:tabular-nums;white-space:nowrap}
-.rules{background:var(--panel);border:1px solid var(--line);border-radius:11px;
-padding:16px 20px}
-.rules li{margin:5px 0;color:#c6cedb;font-size:13px}
-.rules.dev{border-color:#8a6a1f;background:linear-gradient(180deg,#241d0d,var(--panel))}
-.devh{font-weight:650;color:#f0c85a;font-size:13px;margin-bottom:6px;
-  letter-spacing:.02em}
-.devf{color:#93a0b4;font-size:12px;margin-top:8px}
-.devlink{color:#f0c85a;text-decoration:none;border-bottom:1px dotted #8a6a1f}
-.lede{color:#93a0b4;font-size:13px;margin:-4px 0 12px;max-width:64ch;line-height:1.5}
-.wpills{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:11px}
-.wpill{font-size:11px;letter-spacing:.04em;padding:4px 9px;border-radius:999px;
-  background:var(--panel);border:1px solid var(--line);color:#93a0b4}
-.wpill b{color:#e6edf6;margin-left:2px}
-.sig{font-size:10.5px;font-weight:650;letter-spacing:.05em;padding:3px 7px;
-  border-radius:5px;white-space:nowrap;cursor:help}
-.s-ready{background:#0f2e1b;color:#5fd48a;border:1px solid #1d5c37}
-.s-block{background:#2e2410;color:#e0aa4e;border:1px solid #6b5220}
-.s-hold {background:#10243d;color:#6aa9e9;border:1px solid #24507f}
-.s-earn {background:#2d1620;color:#e07a9a;border:1px solid #6b2f45}
-.s-nofit{background:#1b1f26;color:#8b98ab;border:1px solid #2b3240}
-.s-near {background:#1b1f26;color:#a9b4c4;border:1px solid #2b3240}
-.wnote{font-size:12px;color:#e0aa4e;background:#241d0d;border:1px solid #6b5220;
-  border-radius:8px;padding:8px 11px;margin-bottom:11px;line-height:1.5}
-.wnote.ok{color:#5fd48a;background:#0f2419;border-color:#1d5c37}
+
+/* -- panels ------------------------------------------------------------- */
+.rules{background:var(--panel);border:1px solid var(--line);border-radius:13px;
+padding:16px 20px;box-shadow:var(--sh)}
+.rules li{margin:6px 0;color:var(--ink2);font-size:13px}
+.rules li b{color:var(--ink)}
+.rules.dev{border-color:var(--warnln);
+background:linear-gradient(180deg,var(--warnbg),var(--panel) 62%)}
+.devh{font-weight:700;color:var(--warn);font-size:13px;margin-bottom:6px;
+letter-spacing:.01em}
+.devf{color:var(--dim);font-size:12px;margin-top:8px}
+.devlink{color:var(--warn);text-decoration:none;border-bottom:1px dotted var(--warnln);
+font-weight:600}
+.lede{color:var(--dim);font-size:13px;margin:-4px 0 13px;max-width:66ch;line-height:1.55}
 .empty{color:var(--dim);padding:18px;background:var(--panel);
-border:1px solid var(--line);border-radius:11px;font-size:13px}
-code{background:#212936;padding:1.5px 6px;border-radius:4px;font-size:12px;
+border:1px dashed var(--line);border-radius:13px;font-size:13px}
+code{background:var(--chip);padding:1.5px 6px;border-radius:5px;font-size:12px;
+border:1px solid var(--line2);color:var(--ink2);
 font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.tabs{display:flex;gap:2px;margin:24px 0 16px;border-bottom:1px solid var(--line);
-flex-wrap:wrap}
-.tabs button{appearance:none;background:none;border:none;border-bottom:2px solid transparent;
-color:var(--dim);font:inherit;font-weight:600;font-size:13px;padding:10px 15px;
-cursor:pointer;margin-bottom:-1px;transition:color .12s}
+
+/* -- watchlist ---------------------------------------------------------- */
+.wpills{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px}
+.wpill{font-size:11px;letter-spacing:.04em;padding:4px 10px;border-radius:999px;
+background:var(--panel);border:1px solid var(--line);color:var(--dim);
+box-shadow:var(--sh);font-weight:600}
+.wpill b{color:var(--ink);margin-left:3px}
+.sig{font-size:10px;font-weight:700;letter-spacing:.06em;padding:3px 8px;
+border-radius:6px;white-space:nowrap;cursor:help}
+.s-ready{background:var(--posbg);color:var(--pos);border:1px solid var(--posln)}
+.s-block{background:var(--warnbg);color:var(--warn);border:1px solid var(--warnln)}
+.s-hold {background:var(--accbg);color:var(--accent);border:1px solid var(--accln)}
+.s-earn {background:var(--pinkbg);color:var(--pink);border:1px solid var(--pinkln)}
+.s-nofit{background:var(--chip);color:var(--dim);border:1px solid var(--line)}
+.s-near {background:var(--chip);color:var(--dim);border:1px solid var(--line)}
+.wnote{font-size:12px;color:var(--warn);background:var(--warnbg);
+border:1px solid var(--warnln);border-radius:10px;padding:9px 12px;margin-bottom:12px;
+line-height:1.5}
+.wnote.ok{color:var(--pos);background:var(--posbg);border-color:var(--posln)}
+
+/* -- tabs --------------------------------------------------------------- */
+.tabs{display:flex;gap:2px;margin:24px 0 18px;border-bottom:1px solid var(--line);
+flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{appearance:none;background:none;border:none;
+border-bottom:2px solid transparent;color:var(--dim);font:inherit;font-weight:650;
+font-size:13px;padding:10px 15px;cursor:pointer;margin-bottom:-1px;
+transition:color .12s,border-color .12s;white-space:nowrap;flex:none}
 .tabs button:hover{color:var(--ink)}
-.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.tabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
 .tabs .pill{display:inline-block;margin-left:7px;padding:1px 7px;border-radius:999px;
-background:#212936;font-size:10.5px;color:var(--dim);font-weight:600}
+background:var(--chip);font-size:10.5px;color:var(--dim);font-weight:700;
+border:1px solid var(--line)}
+.tabs button[aria-selected="true"] .pill{background:var(--accbg);color:var(--accent);
+border-color:var(--accln)}
 .panel[hidden]{display:none}
-.meter{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:18px 20px}
+
+/* -- readiness meter ---------------------------------------------------- */
+.meter{background:var(--panel);border:1px solid var(--line);border-radius:13px;
+padding:18px 20px;box-shadow:var(--sh)}
 .meter .top{display:flex;justify-content:space-between;align-items:baseline;gap:14px;
 flex-wrap:wrap;margin-bottom:12px}
-.meter .score{font-size:26px;font-weight:600;letter-spacing:-.02em;
-font-variant-numeric:tabular-nums}
-.bar{height:9px;border-radius:999px;background:#212936;overflow:hidden;
+.meter .score{font-size:27px;font-weight:680;letter-spacing:-.025em;
+font-variant-numeric:tabular-nums;color:var(--ink)}
+.bar{height:9px;border-radius:999px;background:var(--chip);overflow:hidden;
 border:1px solid var(--line)}
 .bar span{display:block;height:100%;border-radius:999px;transition:width .4s ease}
-.bar span.low{background:linear-gradient(90deg,#a8352f,#f85149)}
-.bar span.mid{background:linear-gradient(90deg,#9a7016,#d29922)}
-.bar span.high{background:linear-gradient(90deg,#2b8f3d,#3fb950)}
+.bar span.low{background:linear-gradient(90deg,#f0857c,var(--neg))}
+.bar span.mid{background:linear-gradient(90deg,#e8b968,var(--warn))}
+.bar span.high{background:linear-gradient(90deg,#5fd08f,var(--pos))}
 .checks{margin-top:16px;display:grid;gap:1px;background:var(--line);
-border:1px solid var(--line);border-radius:9px;overflow:hidden}
+border:1px solid var(--line);border-radius:11px;overflow:hidden}
 .chk{display:grid;grid-template-columns:22px 1fr;gap:11px;padding:11px 14px;
-background:var(--panel);align-items:start;font-size:13px}
+background:var(--panel);align-items:start;font-size:13px;color:var(--ink2)}
 .chk .m{font-weight:700;line-height:1.3}
 .chk .m.y{color:var(--pos)} .chk .m.n{color:var(--neg)} .chk .m.w{color:var(--warn)}
 .chk .d{color:var(--dim);font-size:12px;margin-top:2px;line-height:1.45}
+
+/* -- event log ---------------------------------------------------------- */
 .evt{display:grid;grid-template-columns:148px 118px 1fr;gap:12px;padding:9px 0;
-border-bottom:1px solid #1b212b;font-size:13px;align-items:baseline}
+border-bottom:1px solid var(--line2);font-size:13px;align-items:baseline;
+color:var(--ink2)}
 .evt:last-child{border-bottom:none}
 .evt time{color:var(--dim);font-variant-numeric:tabular-nums;font-size:12px}
-.evt .what{font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase}
+.evt .what{font-weight:700;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
 .evt .what.open{color:var(--accent)} .evt .what.close{color:var(--warn)}
 .evt .what.exit{color:var(--pos)} .evt .what.dim{color:var(--dim)}
 .c{display:block}
 
+/* -- learning ----------------------------------------------------------- */
+.lesson{background:var(--panel);border:1px solid var(--line);border-left:3px solid
+var(--accent);border-radius:4px 13px 13px 4px;padding:14px 17px;margin-bottom:10px;
+box-shadow:var(--sh)}
+.lesson.tentative{border-left-color:var(--warn)}
+.lesson.insufficient{border-left-color:var(--dim)}
+.lesson h3{margin:0 0 5px;font-size:14px;font-weight:660;color:var(--ink);
+display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.lesson p{margin:0;color:var(--ink2);font-size:13px;line-height:1.55}
+.lesson .fix{margin-top:9px;font-size:12.5px;color:var(--dim)}
+.conf{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+padding:3px 8px;border-radius:6px;white-space:nowrap}
+.conf.supported{background:var(--posbg);color:var(--pos);border:1px solid var(--posln)}
+.conf.tentative{background:var(--warnbg);color:var(--warn);border:1px solid var(--warnln)}
+.conf.insufficient{background:var(--chip);color:var(--dim);border:1px solid var(--line)}
+
 @media (max-width:700px){
-.wrap{padding:18px 13px 52px}
-h1{font-size:17px} h2{margin:24px 0 10px}
-.cards{grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:8px}
-.card{padding:12px 13px;border-radius:10px} .card .v{font-size:19px}
-.tabs{gap:0;margin:18px 0 14px} .tabs button{padding:10px 12px;font-size:12.5px;flex:1}
-.scroll{overflow-x:visible}
-table{min-width:0;border:none;background:none;overflow:visible}
+.wrap{padding:18px 13px 54px}
+h1{font-size:16.5px} h2{margin:24px 0 10px}
+.logo{width:34px;height:34px} .brand{gap:10px} .brandtag{font-size:9.5px}
+.themer{width:31px;height:31px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(144px,1fr));gap:9px}
+.card{padding:12px 13px;border-radius:11px} .card .v{font-size:19px}
+.tabs{gap:0;margin:18px 0 14px} .tabs button{padding:10px 13px;font-size:12.5px}
+.scroll{overflow-x:visible;border-radius:0}
+table{min-width:0;border:none;background:none;overflow:visible;box-shadow:none}
 thead{display:none}
-tbody tr{display:block;background:linear-gradient(180deg,var(--panel2),var(--panel));
-border:1px solid var(--line);border-radius:11px;padding:5px 14px;margin-bottom:10px}
+tbody tr{display:block;background:linear-gradient(180deg,var(--panel),var(--panel2));
+border:1px solid var(--line);border-radius:13px;padding:5px 14px;margin-bottom:10px;
+box-shadow:var(--sh)}
 tbody tr:hover{background:var(--panel)}
 tbody td{display:flex;justify-content:space-between;align-items:baseline;gap:16px;
-padding:8px 0;text-align:right;border-bottom:1px solid #1b212b}
+padding:8px 0;text-align:right;border-bottom:1px solid var(--line2)}
 tbody tr td:last-child{border-bottom:none}
-tbody td::before{content:attr(data-l);color:var(--dim);font-size:10.5px;letter-spacing:.06em;
-text-transform:uppercase;text-align:left;flex:0 0 auto;padding-top:3px;font-weight:600}
+tbody td::before{content:attr(data-l);color:var(--dim);font-size:10px;letter-spacing:.07em;
+text-transform:uppercase;text-align:left;flex:0 0 auto;padding-top:3px;font-weight:700}
 tbody td .c{text-align:right;min-width:0;overflow-wrap:anywhere}
 .note{text-align:right}
 .evt{grid-template-columns:1fr;gap:3px;padding:11px 0}
 .meter{padding:15px 16px} .meter .score{font-size:22px}
 .chk{grid-template-columns:20px 1fr;padding:10px 12px}
 .rules{padding:14px 17px} .rules ul{padding-left:19px}
+.lesson{padding:13px 15px}
+}
+
+@media (prefers-reduced-motion:reduce){
+*{transition:none!important}
 }
 """
 
@@ -168,6 +316,16 @@ def _sign(v: float, fmt: str = ",.0f", money: bool = True) -> str:
     if v > 0:
         txt = "+" + txt
     return f'<span class="{cls}">{txt}</span>'
+
+
+def _pl_class(v: float) -> str:
+    """Accent stripe for a P&L card. Flat is neutral -- a book that has done
+    nothing should not be tinted like a book that has lost something."""
+    if v > 0:
+        return "c-pos"
+    if v < 0:
+        return "c-neg"
+    return ""
 
 
 def _dte_badge(dte: int, strategy=STRATEGY) -> str:
@@ -409,6 +567,16 @@ def _watchlist_panel() -> str:
                 '<code>./run.py watch</code> &mdash; it never opens anything, so it '
                 'can run at any hour.</li></ul></div>')
 
+    # A benched name still gets watched -- watching is free -- but READY means
+    # "opens on the next run", and for a benched name that is false. Say it
+    # here rather than letting two tabs of the same page disagree.
+    benched = learning.blocked_symbols(learning.load())
+    hit = sorted(benched & {e.symbol for e in wl.entries})
+    bench_note = (f'<div class="wnote">Benched by self-repair and skipped by '
+                  f'<code>propose</code> regardless of signal: '
+                  f'<b>{_e(", ".join(hit))}</b>. See the Learning tab.</div>'
+                  if hit else "")
+
     counts = [(sig, wl.count(sig)) for sig in
               ("READY", "BLOCKED", "EARNINGS", "NO_FIT", "NEAR", "STRETCHED")]
     pills = "".join(
@@ -446,7 +614,85 @@ def _watchlist_panel() -> str:
         ])
     table = _table(["ticker", "signal", "strikes", "expiry", "premium", "rate",
                     "cushion", "off high"], rows)
-    return f'<div class="wpills">{pills}</div>{banner}{table}'
+    return f'<div class="wpills">{pills}</div>{bench_note}{banner}{table}'
+
+
+def _learn_pill(settings: Settings) -> str:
+    j = learning.load()
+    s = learning.summary(j, settings)
+    if s["quarantined"]:
+        return f'{len(s["quarantined"])} benched'
+    return f'{s["closed"]}/{s["needed"]}'
+
+
+def _learning_panel(settings: Settings) -> str:
+    """What the record supports, and what the agent repaired by itself.
+
+    The two halves are rendered apart on purpose. Mixing "the agent benched a
+    ticker" in with "wider cushions did better on 11 trades" invites reading
+    both as things that happened, when only the first one did.
+    """
+    j = learning.load()
+    s = learning.summary(j, settings)
+
+    cards = [
+        ("closed trades", f'{s["closed"]}', ""),
+        ("wins / losses", f'{s["wins"]} / {s["losses"]}',
+         "c-pos" if s["wins"] > s["losses"] else ("c-neg" if s["losses"] else "")),
+        ("learning threshold", f'{s["needed"]}', "c-info"),
+        ("faults logged", f'{s["faults"]}', "c-warn" if s["faults"] else ""),
+        ("benched now", f'{len(s["quarantined"])}',
+         "c-warn" if s["quarantined"] else ""),
+        ("self-repairs", f'{s["repairs"]}', "c-info"),
+    ]
+    card_html = "".join(f'<div class="card {c}"><div class="k">{k}</div>'
+                        f'<div class="v">{v}</div></div>' for k, v, c in cards)
+
+    body = [f'<div class="cards">{card_html}</div>']
+
+    # -- the half the agent acts on itself ---------------------------------
+    body.append("<h2>Repairs the agent made itself</h2>")
+    body.append('<p class="lede">Bounded on purpose. A quarantine can only take a '
+                'name <i>out</i> of the proposal list, never put one in, and it '
+                'expires on its own &mdash; so an outage at the data provider cannot '
+                'quietly shrink the universe for good.</p>')
+    if j.quarantines:
+        rows = [[_e(q.symbol), _e(q.since), _e(q.until), str(q.faults), _e(q.reason)]
+                for q in sorted(j.quarantines, key=lambda x: x.until)]
+        body.append(_table(["symbol", "benched", "until", "failures", "why"], rows))
+    else:
+        body.append('<div class="empty">Nothing is benched. Every screened name is '
+                    'eligible to be proposed.</div>')
+    if j.repairs:
+        log = "".join(
+            f'<div class="evt"><time>{_e(r.get("at", "").replace("T", " "))}</time>'
+            f'<span class="what exit">repair</span><span>{_e(r.get("action", ""))}</span>'
+            f"</div>" for r in reversed(j.repairs[-25:]))
+        body.append(f'<h2>Repair log</h2><div class="rules">{log}</div>')
+
+    # -- the half that is only ever a suggestion ---------------------------
+    body.append("<h2>What the closed record supports</h2>")
+    body.append('<p class="lede">Suggestions, and nothing else. The agent does not '
+                'apply any of these &mdash; a pattern drawn from a dozen fills is a '
+                'hypothesis, and moving a risk rule to fit it is how a strategy gets '
+                'worse while its numbers look better. Skill-fixed rules are never '
+                'suggested for change at all.</p>')
+    for les in learning.lessons(j, settings):
+        fix = (f'<div class="fix">Suggested, <b>not applied</b>: '
+               f"<code>{_e(les.suggestion)}</code></div>" if les.suggestion else "")
+        body.append(
+            f'<div class="lesson {_e(les.confidence)}"><h3>{_e(les.title)}'
+            f'<span class="conf {_e(les.confidence)}">{_e(les.confidence)}</span>'
+            f'<span class="tag">n={les.sample}</span></h3>'
+            f"<p>{_e(les.finding)}</p>{fix}</div>")
+
+    gaps = "".join(f"<li>{_e(g)}</li>" for g in learning.feature_gaps())
+    body.append(
+        f"<h2>Not learnable yet</h2>"
+        f'<div class="rules"><div class="devf" style="margin:0 0 8px">These were '
+        f"never written down at open, so their absence from the findings above "
+        f'means "unmeasured", not "no effect".</div><ul>{gaps}</ul></div>')
+    return "".join(body)
 
 
 def _deviations_panel(settings: Settings) -> str:
@@ -490,24 +736,35 @@ def render(led: Ledger, props: list[Proposal], settings: Settings,
         pending_txt = "opened automatically on the next run"
     sectors = ", ".join(f"{k} x{v}" for k, v in sorted(led.sector_counts().items())) or "none"
     cards = [
-        ("net liquidation", f"${led.net_liq:,.2f}"),
-        ("cash", f"${led.cash:,.2f}"),
-        ("collateral at risk", f"${led.collateral_held:,.0f}"),
-        ("available balance", f"${led.buying_power:,.2f}"),
-        ("realized P&amp;L", _sign(led.realized_pl, ",.2f")),
-        ("unrealized P&amp;L", _sign(led.unrealized_pl, ",.2f")),
-        ("total return", _sign(led.total_return * 100, ".2f", money=False) + "%"),
-        ("open positions", f"{len(led.open_positions)} / {settings.max_open_positions}"),
-        ("next expiry", _next_expiry(led.open_positions)),
+        ("net liquidation", f"${led.net_liq:,.2f}", ""),
+        ("cash", f"${led.cash:,.2f}", ""),
+        ("collateral at risk", f"${led.collateral_held:,.0f}", "c-warn"),
+        ("available balance", f"${led.buying_power:,.2f}", "c-info"),
+        ("realized P&amp;L", _sign(led.realized_pl, ",.2f"), _pl_class(led.realized_pl)),
+        ("unrealized P&amp;L", _sign(led.unrealized_pl, ",.2f"), _pl_class(led.unrealized_pl)),
+        ("total return", _sign(led.total_return * 100, ".2f", money=False) + "%",
+         _pl_class(led.total_return)),
+        ("open positions", f"{len(led.open_positions)} / {settings.max_open_positions}", ""),
+        ("next expiry", _next_expiry(led.open_positions), "c-info"),
     ]
-    card_html = "".join(f'<div class="card"><div class="k">{k}</div>'
-                        f'<div class="v">{v}</div></div>' for k, v in cards)
+    card_html = "".join(f'<div class="card {c}"><div class="k">{k}</div>'
+                        f'<div class="v">{v}</div></div>' for k, v, c in cards)
 
     doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Put Credit Spread Agent - {_e(settings.account_label)}</title>
-<style>{CSS}</style></head><body><div class="wrap">
-<h1>S&amp;P 500 Beaten-Down Put Credit Spread Agent</h1>
+<link rel="icon" href="{_favicon()}">
+<style>{CSS}</style>
+<script>/* Applied before first paint: a saved dark theme must not flash light. */
+try{{var t=localStorage.getItem('pcs-theme');
+if(t)document.documentElement.setAttribute('data-theme',t);}}catch(e){{}}</script>
+</head><body><div class="wrap">
+<div class="top"><div class="brand">{LOGO_SVG}<div class="brandtext">
+<h1>Put Credit Spread Agent</h1>
+<div class="brandtag">S&amp;P 500 &middot; beaten-down &middot; defined risk</div>
+</div></div>
+<button class="themer" id="themer" type="button" aria-label="Switch between the light
+and dark palette" title="Light / dark">&#9681;</button></div>
 <div class="sub">{_e(settings.account_label)} &middot; mode <b>{_e(led.mode)}</b> &middot;
 opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H:%M}</div>
 <div class="banner">{_e(sess.banner)}</div>
@@ -520,6 +777,8 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 >{_ready_pill(led, settings)}</span></button>
 <button role="tab" aria-selected="false" data-t="watch">Watchlist<span class="pill"
 >{_watch_pill()}</span></button>
+<button role="tab" aria-selected="false" data-t="learn">Learning<span class="pill"
+>{_learn_pill(settings)}</span></button>
 <button role="tab" aria-selected="false" data-t="rules">Rules</button>
 </div>
 
@@ -563,6 +822,14 @@ so this runs around the clock.</p>
 {_watchlist_panel()}
 </section>
 
+<section class="panel" id="p-learn" hidden>
+<h2>Self-learning</h2>
+<p class="lede">The agent keeps a journal of every closed trade and of its own
+operational failures, and treats them differently. Failures it repairs itself.
+Trades it can only report on &mdash; and only once there are enough of them.</p>
+{_learning_panel(settings)}
+</section>
+
 <section class="panel" id="p-rules" hidden>
 <h2>Configuration</h2>
 {_deviations_panel(settings)}
@@ -598,7 +865,7 @@ nobody is watching. Closing only, paper only, never on a stale mark.</li>
   var tabs=[].slice.call(document.querySelectorAll('.tabs button'));
   function show(name){{
     tabs.forEach(function(b){{ b.setAttribute('aria-selected', b.dataset.t===name); }});
-    ['now','history','watch','ready','rules'].forEach(function(n){{
+    ['now','history','watch','ready','learn','rules'].forEach(function(n){{
       var el=document.getElementById('p-'+n);
       if(el) el.hidden = (n!==name);
     }});
@@ -611,6 +878,13 @@ nobody is watching. Closing only, paper only, never on a stale mark.</li>
   var saved;
   try{{ saved = localStorage.getItem('pcs-tab'); }}catch(e){{}}
   if(saved && document.getElementById('p-'+saved)) show(saved);
+
+  var root=document.documentElement, btn=document.getElementById('themer');
+  if(btn) btn.addEventListener('click', function(){{
+    var dark = root.getAttribute('data-theme') !== 'dark';
+    root.setAttribute('data-theme', dark ? 'dark' : 'light');
+    try{{ localStorage.setItem('pcs-theme', dark ? 'dark' : 'light'); }}catch(e){{}}
+  }});
 }})();
 </script>
 </div></body></html>"""

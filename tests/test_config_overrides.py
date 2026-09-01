@@ -12,7 +12,7 @@ from conftest import make_chain
 
 ROOT = Path(__file__).resolve().parent.parent
 
-from pcs import paper_broker
+from pcs import learning, paper_broker
 from pcs.config import STRATEGY, Settings
 from pcs.exits import TAKE_PROFIT
 from pcs.ledger import Ledger
@@ -179,7 +179,7 @@ def test_auto_open_refuses_a_shut_market(settings, led, tmp_path, monkeypatch):
     assert not shut.is_open                 # ... and this is what must stop it
 
     props = [_pending_proposal()]
-    assert run._auto_open(props, led, settings, shut) == 0
+    assert run._auto_open(props, led, settings, shut, learning.Journal()) == 0
     assert not led.open_positions
     assert props[0].status == "pending"
 
@@ -188,7 +188,7 @@ def test_auto_open_opens_when_the_market_is_live(settings, led, live_session):
     run = _load_cli()
     settings.auto_approve = True
     props = [_pending_proposal()]
-    assert run._auto_open(props, led, settings, live_session) == 1
+    assert run._auto_open(props, led, settings, live_session, learning.Journal()) == 1
     assert len(led.open_positions) == 1
     assert props[0].status == "approved"
     assert props[0].approved_by == settings.auto_approver()

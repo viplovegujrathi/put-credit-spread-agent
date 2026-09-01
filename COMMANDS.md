@@ -176,6 +176,32 @@ live market: a close at 22:00 against the afternoon print is a fill nobody got.
 |---|---|
 | `--no-auto-exit` | Decide but do not execute — print the exits that are due |
 
+Also ingests any newly closed trade into the journal and runs self-repair — so
+the learning record stays current without a second timer.
+
+### `./run.py learn`
+Reads the closed record and prints what it actually supports, then runs the
+agent's own self-repair pass. Two halves, deliberately different:
+
+- **Trades → suggestions only.** Wins and losses are grouped by cushion at
+  entry, premium richness, quote grade at fill and sector. Nothing is reported
+  under 8 closed trades, and no comparison is made unless both sides hold at
+  least 4. Every finding prints the `config --set` line and stops — the agent
+  applies none of them.
+- **Faults → repaired automatically.** A symbol whose chain fails to price 3
+  times in 7 days is benched for 5 days and skipped by `propose`. The bench
+  expires on its own. This is the only thing the agent changes by itself, and
+  it can only ever *remove* a candidate.
+
+Runs as part of every `mark`, so the timers already do it. Call it directly to
+read the findings.
+
+```bash
+./run.py learn
+```
+
+Writes `data/journal.json`. Shown on the dashboard's **Learning** tab.
+
 ### `./run.py status`
 Cash, collateral held, capital at risk, available balance, net liquidation, open
 and closed positions. Read-only.
@@ -243,12 +269,22 @@ Sets and persists to `data/settings.json`. Repeatable.
 | `mode` | `paper` | `live` is refused in code |
 | `chain_source` | `yfinance` | `yfinance` \| `robinhood` \| `model` |
 | `opening_settle_minutes` | `30` | No opening inside this many minutes of the bell |
+| `self_repair` | `on` | Let the agent bench symbols whose chains keep failing |
+| `learning_min_sample` | `8` | Closed trades before any lesson is drawn at all |
+| `learning_min_group` | `4` | Trades needed on each side of a comparison |
+| `learning_min_effect` | `0.20` | Win-rate gap that counts as a real difference |
+| `learning_fault_threshold` | `3` | Data failures before a symbol is benched |
+| `learning_quarantine_days` | `5` | How long a bench lasts before it expires |
 
 Unset means *use the strategy's number*. Every override is reported on the ticket,
 on the dashboard's Rules tab, and by `config` — a ticket sized under a loosened cap
 can never be read as one that met the standard rule.
 
 **No setting can lift the approval requirement off a live ledger.**
+
+**No setting makes the agent apply its own lessons.** The learning knobs move the
+floors for *reporting* a pattern; turning them all the way down produces louder
+suggestions, not automatic changes.
 
 ---
 

@@ -13,6 +13,10 @@ data/proposals.json
 data/settings.json
 data/snapshots.json
 data/last_screen*.json
+# Written on the box by its own timers -- committing a laptop copy means a
+# redeploy overwrites the live one with a stale snapshot.
+data/watchlist.json
+data/journal.json
 data/chain_requests.json
 data/rh_chains/*
 data/rh_raw/*

@@ -6,6 +6,7 @@
     ./run.py approve P260831-01 --approver "Viplove"    <- the human gate
     ./run.py reject  P260831-01 --reason "too close to earnings"
     ./run.py mark                   refresh marks, surface management actions
+    ./run.py learn                  what the closed record supports, and self-repair
     ./run.py status                 account + open positions
     ./run.py close  <position-id>   close a paper position at the current mark
     ./run.py dashboard              rebuild dashboard.html
@@ -27,6 +28,7 @@ from pcs import (
     chains,
     dashboard,
     exits,
+    learning,
     marketdata,
     paper_broker,
     pipeline,
@@ -114,6 +116,14 @@ def cmd_propose(args, settings: Settings) -> int:
     led = ledger_mod.Ledger.load(settings)
     cands = pipeline.shortlist(res, include_tight=args.include_tight)
 
+    # Names the agent benched itself after repeated data failures. Applied here
+    # rather than inside the pipeline: the pipeline states the strategy, and a
+    # quarantine is an operational fact about a data feed, not a rule.
+    benched = learning.blocked_symbols(learning.load())
+    dropped = [c.symbol for c in cands if c.symbol in benched]
+    if dropped:
+        cands = [c for c in cands if c.symbol not in benched]
+
     print(BAR)
     print(f"PROPOSE  {res.session.now_et:%Y-%m-%d %H:%M %Z}")
     print(f"account: {settings.account_label} [{led.mode}]   cash {_money(led.cash)}   "
@@ -125,8 +135,14 @@ def cmd_propose(args, settings: Settings) -> int:
           f"{' (incl. NEAR_BELOW_TIGHT)' if args.include_tight else ''}")
     if not cands:
         print("  nothing passed the screen today - no proposals.")
+        if dropped:
+            print(f"  ({len(dropped)} name(s) benched by self-repair: "
+                  f"{', '.join(dropped)})")
         return 0
     print("  " + ", ".join(c.symbol for c in cands))
+    if dropped:
+        print(f"  benched by self-repair (not proposed): {', '.join(dropped)}"
+              f"  --  ./run.py learn")
 
     exp_probe = args.expiration or pipeline.resolve_batch_expiration(cands, settings)
     if exp_probe:
@@ -189,7 +205,7 @@ def _fill_line(p, pos, led) -> str:
             f"collateral {_money(pos.collateral)}  -> {pos.id}")
 
 
-def _auto_open(props, led, settings: Settings, sess) -> int:
+def _auto_open(props, led, settings: Settings, sess, journal=None) -> int:
     """Open every clear proposal, in rank order, with no human in the loop.
 
     Only reachable when `require_approval()` is False, which is paper-only. The
@@ -212,6 +228,10 @@ def _auto_open(props, led, settings: Settings, sess) -> int:
               f"./run.py approve <id> --approver \"your name\"")
         return 0
 
+    # Loaded here, not at the top of `propose`: the screen in between takes
+    # minutes, and the mark timer writes this same file every fifteen. Holding
+    # a copy across that gap means saving it clobbers whatever mark decided.
+    journal = learning.load() if journal is None else journal
     approver = settings.auto_approver()
     opened, held = [], []
     for p in props:
@@ -223,12 +243,15 @@ def _auto_open(props, led, settings: Settings, sess) -> int:
                 proposal_id=p.id, approved_by=approver, sess=sess)
         except paper_broker.OpenBlocked as exc:
             held.append((p, str(exc)))
+            learning.record_fault(journal, learning.OPEN_BLOCKED, p.symbol, str(exc))
             continue
         _record_fill(p, pos, approver)
         opened.append((p, pos))
     if opened or held:
         led.save()
         proposer.save(props)
+    if held:
+        learning.save(journal)
     print(f"  approver recorded as: {approver}")
     for p, pos in opened:
         print(_fill_line(p, pos, led))
@@ -313,10 +336,25 @@ def cmd_reject(args, settings: Settings) -> int:
     return 0
 
 
+def _journal_pass(journal, led, settings: Settings) -> list[str]:
+    """Ingest any newly closed trades, run self-repair, persist.
+
+    Kept in one function so `mark` and `learn` cannot drift apart, and called
+    on every path -- an account with nothing open still has quarantines that
+    need to expire on schedule.
+    """
+    learning.sync(journal, led)
+    repairs = learning.self_repair(journal, settings)
+    learning.save(journal)
+    return repairs
+
+
 def cmd_mark(args, settings: Settings) -> int:
     led = ledger_mod.Ledger.load(settings)
     if not led.open_positions:
         print("no open positions to mark.")
+        for r in _journal_pass(learning.load(), led, settings):
+            print(f"  SELF-REPAIR  {r}")
         return 0
     sess = session.state_for(settings)
     print(f"{BAR}\nMARK  {sess.now_et:%Y-%m-%d %H:%M %Z}   {sess.banner}\n{BAR}")
@@ -325,6 +363,14 @@ def cmd_mark(args, settings: Settings) -> int:
     for s, snap in marketdata.fetch_snapshots(syms, batch_size=len(syms)).items():
         spots.setdefault(s, snap.spot)
     notes, fresh = paper_broker.mark_positions(led, settings, spots)
+
+    # A position that would not re-price is a data fault against that symbol,
+    # not a trading decision. Recorded here because this is the only place that
+    # knows a mark was attempted and failed.
+    journal = learning.load()
+    for pos, note in notes:
+        if note.startswith("could not mark"):
+            learning.record_fault(journal, learning.MARK_FAILED, pos.symbol, note)
 
     decisions = exits.review(led, settings, fresh)
     auto = settings.auto_exit and led.mode == "paper" and not args.no_auto_exit
@@ -364,6 +410,11 @@ def cmd_mark(args, settings: Settings) -> int:
         print("\nWATCHING (no action due):")
         for pos, d in watch:
             print(f"  {pos.symbol} {pos.short_strike:g}/{pos.long_strike:g} [{pos.id}]: {d.reason}")
+    # Closes taken above are now in the ledger, so ingest after the exits run
+    # rather than before -- otherwise every trade lands in the journal a run late.
+    for r in _journal_pass(journal, led, settings):
+        print(f"\n  SELF-REPAIR  {r}")
+
     dashboard.render(led, proposer.load(), settings, sess)
     return 0
 
@@ -391,6 +442,52 @@ def _print_positions(led) -> None:
             print(f"  {p.id:<10}{p.symbol:<7}"
                   f"{f'{p.short_strike:g}/{p.long_strike:g}p':<14}"
                   f"{p.realized_pl:>+9,.0f}   {p.close_reason}")
+
+
+def cmd_learn(args, settings: Settings) -> int:
+    """What the closed record supports -- and the repairs the agent made itself.
+
+    Read-only with respect to trading. It ingests closed trades, expires and
+    creates quarantines, and prints suggestions. It never applies one: a
+    suggestion drawn from a dozen fills is a hypothesis, and the account is the
+    only thing that pays if it is wrong.
+    """
+    led = ledger_mod.Ledger.load(settings)
+    journal = learning.load()
+    before = len(journal.outcomes)
+    repairs = _journal_pass(journal, led, settings)
+    s = learning.summary(journal, settings)
+
+    print(f"{BAR}\nLEARN  {dt.datetime.now():%Y-%m-%d %H:%M}\n{BAR}")
+    print(f"closed trades on record: {s['closed']}  ({s['wins']}W / {s['losses']}L)"
+          f"   newly ingested: {len(journal.outcomes) - before}")
+    print(f"operational faults logged: {s['faults']}   self-repairs to date: "
+          f"{s['repairs']}")
+    if repairs:
+        print("\nSELF-REPAIR THIS RUN:")
+        for r in repairs:
+            print(f"  {r}")
+    if s["quarantined"]:
+        print("\nBENCHED (kept out of proposals until the date shown):")
+        for q in journal.quarantines:
+            print(f"  {q.symbol:6} until {q.until}  -- {q.reason}")
+    else:
+        print("\nnothing benched: every symbol is in the universe.")
+
+    print(f"\n{BAR}\nWHAT THE RECORD SUPPORTS\n{BAR}")
+    for lesson in learning.lessons(journal, settings):
+        print(f"\n[{lesson.confidence.upper()}] {lesson.title}  (n={lesson.sample})")
+        print(f"  {lesson.finding}")
+        if lesson.suggestion:
+            print(f"  suggested, NOT applied:  {lesson.suggestion}")
+
+    print("\nNot learnable -- the ledger never recorded these at open:")
+    for g in learning.feature_gaps():
+        print(f"  - {g}")
+    print("\nNothing above has been applied. Every number stays where it is until "
+          "you change it.")
+    dashboard.render(led, proposer.load(), settings, session.state_for(settings))
+    return 0
 
 
 def cmd_status(args, settings: Settings) -> int:
@@ -514,6 +611,14 @@ _CONFIG_GROUPS = (
         ("max_open_positions", ""),
         ("max_positions_per_sector", ""),
         ("max_positions_per_ticker", ""),
+    )),
+    ("Self-learning  (suggestions only; the agent applies none of them)", (
+        ("self_repair", "let the agent bench symbols whose chains keep failing"),
+        ("learning_min_sample", "closed trades before any lesson is drawn at all"),
+        ("learning_min_group", "trades needed on each side of a comparison"),
+        ("learning_min_effect", "win-rate gap that counts as a real difference"),
+        ("learning_fault_threshold", "data failures before a symbol is benched"),
+        ("learning_quarantine_days", "how long a bench lasts before it expires"),
     )),
     ("Account and ops", (
         ("mode", "paper | live -- live is refused in code, see paper_broker"),
@@ -683,6 +788,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="decide but do not execute: print the exits that are due "
                         "and leave every position open")
     p.set_defaults(fn=cmd_mark)
+
+    p = sub.add_parser("learn", help="what the closed record supports; run self-repair")
+    p.set_defaults(fn=cmd_learn)
 
     p = sub.add_parser("status", help="account and positions")
     p.set_defaults(fn=cmd_status)

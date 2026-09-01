@@ -167,6 +167,27 @@ class Settings:
     # requires a human, and the agent cannot place a live order regardless.
     auto_approve: bool = False
 
+    # --- self-learning (pcs/learning.py) -----------------------------------
+    # The agent keeps a journal of closed trades and its own operational
+    # failures. What it may do with each is deliberately different.
+    #
+    # Trades produce SUGGESTIONS only. These floors are what stops a run of
+    # luck from being read as a finding: no lesson under `min_sample` closed
+    # trades, no comparison unless both sides hold `min_group`, and no lesson
+    # at all unless the win-rate gap clears `min_effect`. They are high on
+    # purpose -- the cost of a missed pattern is a slightly worse rule, and
+    # the cost of a false one is a rule fitted to noise.
+    self_repair: bool = True             # off = journal still records, never acts
+    learning_min_sample: int = 8         # closed trades before any lesson at all
+    learning_strong_sample: int = 20     # ... before a lesson is called "supported"
+    learning_min_group: int = 4          # per side of a two-way comparison
+    learning_min_effect: float = 0.20    # win-rate gap that counts as a difference
+    # Faults are the part the agent repairs itself, because benching a symbol
+    # can only ever remove a candidate -- it has no path to opening anything.
+    learning_fault_threshold: int = 3    # data failures before a symbol is benched
+    learning_fault_window_days: int = 7  # ... counted inside this window
+    learning_quarantine_days: int = 5    # how long a bench lasts before it expires
+
     # --- go-live readiness (pcs/readiness.py) ------------------------------
     # What the broker says, recorded after being checked rather than assumed.
     # Both go stale, so the timestamp is part of the fact.

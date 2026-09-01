@@ -49,7 +49,8 @@ rsync -a --delete \
   --exclude '.pytest_cache' --exclude '.ruff_cache' \
   --exclude 'data/ledger.json' --exclude 'data/proposals.json' \
   --exclude 'data/settings.json' --exclude 'data/snapshots.json' \
-  --exclude 'data/last_screen*.json' --exclude 'logs' \
+  --exclude 'data/last_screen*.json' --exclude 'data/watchlist.json' \
+  --exclude 'data/journal.json' --exclude 'logs' \
   "$SRC"/ "$APP"/
 chmod +x "$APP"/deploy/*.sh "$APP"/run.py
 mkdir -p "$APP/data" "$APP/logs"
@@ -85,6 +86,9 @@ chown -R "$SVC_USER:$SVC_USER" "$APP" "$WEB"
 # A ledger has to exist before the timers run, or the first fire is the thing
 # that creates it -- and a failure there looks like a broken timer.
 sudo -u "$SVC_USER" "$APP/.venv/bin/python" "$APP/run.py" status >/dev/null
+# `learn` creates data/journal.json and runs the first self-repair pass, so the
+# Learning tab has a file to read rather than an empty state that looks broken.
+sudo -u "$SVC_USER" "$APP/.venv/bin/python" "$APP/run.py" learn >/dev/null
 sudo -u "$SVC_USER" "$APP/.venv/bin/python" "$APP/run.py" dashboard >/dev/null
 install -o "$SVC_USER" -g "$SVC_USER" -m 0644 "$APP/dashboard.html" "$WEB/index.html"
 echo "  ledger + dashboard initialised"
@@ -153,6 +157,7 @@ else
   echo "  (shown once; store it in your password manager now)"
 fi
 
+install -o "$SVC_USER" -g "$SVC_USER" -m 0644 "$APP/deploy/401.html" "$WEB/401.html"
 sed "s/PCS_DOMAIN/$DOMAIN/g" "$APP/deploy/nginx-pcs.conf" > "$CONF"
 ln -sf "$CONF" /etc/nginx/sites-enabled/pcs
 
