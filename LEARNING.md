@@ -74,6 +74,9 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
   `Settings`, never touches `STRATEGY`, and never opens or closes a position.
   A quarantine is one-directional — it can only remove a candidate — and it
   expires on its own. See §16.
+- `htpasswd -c` TRUNCATES the password file. Never call it against an existing
+  `.htpasswd` — one stray `-c` deletes every login including your own. Use
+  `deploy/viewer.sh`, which only reaches for `-c` when the file does not exist.
 - Anything written on the box by its own timers (`data/ledger.json`,
   `data/watchlist.json`, `data/journal.json`, `data/settings.json`) must be in
   BOTH `.gitignore` and the `rsync --delete` excludes in `deploy/bootstrap.sh`.
