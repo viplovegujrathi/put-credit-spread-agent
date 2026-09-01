@@ -64,24 +64,17 @@ tradeable one.
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `./run.py screen [--verbose]` | Run the screen over all 503 constituents, print every bucket |
-| `./run.py propose` | Screen → size → portfolio risk → proposal tickets |
-| `./run.py approve <id> --approver <name>` | The human gate. Fills into the paper ledger |
-| `./run.py config [--set k=v]` | View or change the configurable rules |
-| `./run.py reject <id> --reason "..."` | Record a decline |
-| `./run.py watch` | Refresh the watchlist. **Opens nothing**, so it runs 24/7 |
-| `./run.py mark` | Re-mark open positions, then **take any exit that is due** |
-| `./run.py mark --no-auto-exit` | Decide but do not execute — print the exits that are due |
-| `./run.py status` | Cash, collateral, available balance, net liq, open/closed |
-| `./run.py close <position-id>` | Close a paper position at the current mark |
-| `./run.py dashboard` | Rebuild `dashboard.html` |
-| `./run.py universe --refresh` | Refresh the S&P 500 constituent list |
-| `./run.py chain-requests` | Emit the chains to pull through the Robinhood MCP |
+Every command, every flag, and how to stand up a new EC2 box live in
+**[COMMANDS.md](COMMANDS.md)** — one file, kept current with the code.
 
-Useful flags: `--source {yfinance,robinhood,model}`, `--symbols AAPL MCD`,
-`--include-tight`, `--contracts N`, `--max-cache-age 180`, `--expiration YYYY-MM-DD`.
+```bash
+./run.py screen      # who qualifies, and why everyone else didn't
+./run.py watch       # the watchlist: what's tracked and what's blocking it
+./run.py propose     # screen -> size -> portfolio risk -> tickets (-> open)
+./run.py mark        # re-price, then take any exit that is due
+./run.py config      # what's configurable, and what's been changed
+./run.py status      # cash, collateral, available balance, net liq
+```
 
 ---
 
@@ -329,6 +322,7 @@ run.py             CLI
 tools/rh_ingest.py Robinhood MCP payloads -> chain snapshots
 tests/             123 tests over the rules that must not silently break
 docs/              STRATEGY.md, ARCHITECTURE.md
+COMMANDS.md        every command + EC2 setup -- the operational reference
 LEARNING.md        what building this actually taught us
 ```
 

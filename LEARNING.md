@@ -24,6 +24,7 @@ module. Update it in the same commit as the code it describes.
 | `pcs/risk.py` | portfolio caps across a batch, incl. the balance floor | per-trade caps |
 | `pcs/session.py` | clock, holidays, quote-quality grade, the opening-range gate | anything that mutates |
 | `pcs/exits.py` | §1.7 exit **decisions** (take profit / stop / defend) — pure | ledger mutation |
+| `pcs/watchlist.py` | what is tracked and why it has not been taken — **observation only** | anything that opens; it must not import `paper_broker` |
 | `pcs/paper_broker.py` | the three open gates, simulated fills, marking, exit **execution** | exit policy |
 | `pcs/ledger.py` | cash, positions, append-only events, all account arithmetic | any policy |
 | `pcs/pipeline.py` | wiring: screen → shortlist → size → earnings → propose | new rules |
@@ -79,8 +80,14 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
 ./run.py propose --no-auto-open # tickets only, even with auto_approve on
 ./run.py config                 # every knob + what has been changed from the mandate
 ./run.py config --set auto_approve=off --set max_collateral_per_trade=750
+./run.py watch                  # refresh the watchlist -- opens nothing, runs 24/7
 ./run.py status | dashboard
 ```
+
+**`COMMANDS.md` is the single operational reference** — every command, every
+flag, and the from-scratch EC2 setup. Update it in the same commit as any
+command change. The README links to it and does not repeat it; `docs/DEPLOY.md`
+was deleted because it had drifted into saying things that were no longer true.
 
 ### Current state (2026-08-31)
 
@@ -373,6 +380,60 @@ comment, because it is what someone reads instead of checking.
 
 ---
 
+## 15. Deploying it taught us more than writing it
+
+Six real bugs surfaced by running the deploy, none of which produced an error.
+That is the pattern worth carrying: `nginx -t` passed, certbot succeeded, the
+installer printed `== done`, the site returned HTTP 200 — while serving the
+wrong page from the wrong file on a box whose timers would never have fired
+during market hours.
+
+**A comment is not a fact.** The timer files said *"Instance timezone is
+America/New_York, so this follows DST on its own."* Nothing ever set it. EC2
+defaults to UTC, so `10:15` meant 06:15 ET. The comment described an assumption
+in the voice of an established fact, which is the most expensive kind.
+
+**Put the schedule's timezone in the schedule.** `timedatectl set-timezone`
+works but makes market hours a property of *the machine*; anything else later
+scheduled on that box silently moves four hours. systemd v252+ takes the zone
+inside the spec — `OnCalendar=Mon..Fri 10:15 America/New_York` — which keeps it
+a property of this agent. Test the capability (`systemd-analyze calendar` with a
+zone) rather than parsing a version.
+
+**systemd `/N` repetition applies within one field.** `09:35..15:55/15:00` is
+not a valid way to say "every 15 minutes across the session"; the minute field
+would have to carry the hour. Two rules instead.
+
+**`certbot --nginx` edits your config and picks the block itself.** The real
+vhost cannot be enabled before the certificate exists (it references cert paths),
+so unlinking it left the default site as the only candidate — certbot put the
+domain and the TLS config *there*. `certbot certonly --webroot` obtains the
+certificate without touching config at all; a throwaway HTTP-only vhost answers
+the challenge.
+
+**Duplicate `server_name` on one port is not an nginx error.** The first block
+loaded wins and `sites-enabled` sorts alphabetically, so `default` beat `pcs`.
+Nothing fails; the wrong page is simply served. Now checked for explicitly.
+
+**A blanket port-80 redirect kills renewal.** Redirecting everything to HTTPS
+works for 90 days and then quietly stops `certbot renew` from proving the domain.
+`/.well-known/acme-challenge/` has to come before the redirect.
+
+**`ProtectSystem=strict` and library caches.** yfinance resolves its cache
+through platformdirs to `$HOME/.cache` — inside the read-only region. Nothing
+caught it because the install only ran `status` and `dashboard`, neither of which
+touches yfinance; the first thing to exercise it would have been the first timer
+firing. Fixed with `CacheDirectory=` rather than widening `ReadWritePaths` over
+the install tree.
+
+**Verify from outside the box.** Every one of these was found by `curl` from the
+laptop asking what a stranger actually receives — not by reading logs on the
+instance, which reported success throughout. Run a scheduled job by hand *out of
+hours* before trusting a timer: it exercises network, sandbox and permissions
+for real, and holds at the fill because the market is shut.
+
+---
+
 ## What the tests actually protect
 
 123 tests, and they are deliberately aimed at the rules that would fail
@@ -403,3 +464,9 @@ comment, because it is what someone reads instead of checking.
 - `max_loss_per_trade` and `max_collateral_per_trade` are the same cap, and the
   tighter of the two binds in both directions
 - the master switch stops entries without stopping exits
+- the watchlist cannot open a position — asserted by reading the module source
+  for `paper_broker`, because "it currently doesn't" is not a guarantee
+- a stale-session watchlist reports `tradeable == False`; an out-of-hours price
+  is never presented as a premium you could get
+- a name blocked by a portfolio cap stays on the watchlist **with its price**,
+  rather than vanishing the way it does from the proposal list
