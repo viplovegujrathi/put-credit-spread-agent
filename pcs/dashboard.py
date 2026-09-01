@@ -46,6 +46,11 @@ background:#22272e;color:var(--dim);border:1px solid var(--line)}
 .tag.ok{color:var(--pos);border-color:#20402a} .tag.blocked{color:var(--neg);border-color:#4a2224}
 .tag.act{color:var(--warn);border-color:#463a17}
 .note{font-size:12px;color:var(--warn);padding:2px 0}
+.dte{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;
+font-weight:600;background:#22272e;border:1px solid var(--line);color:var(--dim)}
+.dte.soon{color:var(--warn);border-color:#463a17;background:#2a2415}
+.dte.now{color:var(--neg);border-color:#4a2224;background:#2c1a1c}
+.exp{font-variant-numeric:tabular-nums;white-space:nowrap}
 .rules{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
 .rules li{margin:4px 0;color:#c3cad3;font-size:13px}
 .empty{color:var(--dim);padding:16px;background:var(--panel);
@@ -56,6 +61,44 @@ code{background:#22272e;padding:1px 6px;border-radius:4px;font-size:12px}
 
 def _e(x) -> str:
     return html.escape(str(x))
+
+
+def _dte_badge(dte: int, strategy=STRATEGY) -> str:
+    """Days to expiration, coloured by which exit rule is next to bite.
+
+    This strategy is entirely DTE-driven -- management starts at 21 days and a
+    tested short strike is defended at 7 -- so the clock deserves the same
+    visual weight as the money.
+    """
+    if dte <= strategy.defend_dte:
+        cls, hint = "dte now", "defend"
+    elif dte <= strategy.manage_dte:
+        cls, hint = "dte soon", "manage"
+    else:
+        cls, hint = "dte", ""
+    label = f"{dte}d" + (f" · {hint}" if hint else "")
+    return f'<span class="{cls}">{_e(label)}</span>'
+
+
+def _next_expiry(rows: list[Position]) -> str:
+    """The nearest expiration across the open book, with its DTE badge.
+
+    Every exit rule in this strategy is a function of days remaining, so the
+    soonest expiry is the single most useful number that is not a dollar
+    amount. With nothing open there is no clock to show.
+    """
+    if not rows:
+        return '<span class="dim">-</span>'
+    nxt = min(rows, key=lambda p: p.expiration)
+    same = sum(1 for p in rows if p.expiration == nxt.expiration)
+    more = f'<span class="dim" style="font-size:12px"> x{same}</span>' if same > 1 else ""
+    return (f'<span style="font-size:20px">{_e(nxt.expiration)}</span>{more}'
+            f'<div style="margin-top:6px">{_dte_badge(nxt.dte)}</div>')
+
+
+def _expiry_cell(expiration: str, dte: int) -> str:
+    return (f"<td class='exp'><b>{_e(expiration)}</b><div style='margin-top:3px'>"
+            f"{_dte_badge(dte)}</div></td>")
 
 
 def _sign(v: float, fmt: str = ",.0f", money: bool = True) -> str:
@@ -79,11 +122,11 @@ def _positions_table(rows: list[Position], settings: Settings) -> str:
             f"<tr><td><code>{_e(p.id)}</code></td><td><b>{_e(p.symbol)}</b>"
             f"<div class='dim' style='font-size:11px'>{_e(p.sector)}</div></td>"
             f"<td>{p.short_strike:g}/{p.long_strike:g}p</td>"
-            f"<td>{_e(p.expiration)}<div class='dim' style='font-size:11px'>{p.dte} DTE</div></td>"
-            f"<td>{p.contracts}</td><td>${p.credit_dollars:,.0f}</td>"
-            f"<td>${p.collateral:,.0f}</td>"
-            f"<td>${p.mark_cost_to_close * 100 * p.contracts:,.0f}</td>"
-            f"<td>{_sign(p.open_pl)}</td><td>{p.pct_of_max_credit:.0%} {tag}"
+            + _expiry_cell(p.expiration, p.dte)
+            + f"<td>{p.contracts}</td><td>${p.credit_dollars:,.0f}</td>"
+            + f"<td>${p.collateral:,.0f}</td>"
+            + f"<td>${p.mark_cost_to_close * 100 * p.contracts:,.0f}</td>"
+            + f"<td>{_sign(p.open_pl)}</td><td>{p.pct_of_max_credit:.0%} {tag}"
             + (f"<div class='note'>{_e(note)}</div>" if note else "")
             + "</td></tr>")
     return (
@@ -98,7 +141,8 @@ def _closed_table(rows: list[Position]) -> str:
         return '<div class="empty">No closed positions yet.</div>'
     body = "".join(
         f"<tr><td><code>{_e(p.id)}</code></td><td><b>{_e(p.symbol)}</b></td>"
-        f"<td>{p.short_strike:g}/{p.long_strike:g}p</td><td>{_e(p.expiration)}</td>"
+        f"<td>{p.short_strike:g}/{p.long_strike:g}p</td>"
+        f"<td class='exp'><b>{_e(p.expiration)}</b></td>"
         f"<td>${p.credit_dollars:,.0f}</td><td>${p.close_debit * 100 * p.contracts:,.0f}</td>"
         f"<td>{_sign(p.realized_pl)}</td><td class='dim'>{_e(p.close_reason)}</td></tr>"
         for p in sorted(rows, key=lambda x: x.closed_at, reverse=True))
@@ -123,8 +167,8 @@ def _proposals_table(props: list[Proposal]) -> str:
             f"<div class='dim' style='font-size:11px'>{_e(p.sector)}</div></td>"
             f"<td>{s['short_strike']:g}/{s['long_strike']:g}p<div class='dim' "
             f"style='font-size:11px'>${s['width']:g} wide</div></td>"
-            f"<td>{_e(s['expiration'])}<div class='dim' style='font-size:11px'>"
-            f"{s['dte']} DTE</div></td><td>${s['credit_dollars']:.0f}"
+            + _expiry_cell(s["expiration"], s["dte"])
+            + f"<td>${s['credit_dollars']:.0f}"
             f"<div class='dim' style='font-size:11px'>nat ${s['credit_nat_dollars']:.0f}</div></td>"
             f"<td>${s['collateral']:.0f}</td><td>{s['roc']:.0%}</td>"
             f"<td>{s['cushion']:.1%}</td>"
@@ -150,6 +194,7 @@ def render(led: Ledger, props: list[Proposal], settings: Settings,
         ("unrealized P&amp;L", _sign(led.unrealized_pl, ",.2f")),
         ("total return", _sign(led.total_return * 100, ".2f", money=False) + "%"),
         ("open positions", f"{len(led.open_positions)} / {settings.max_open_positions}"),
+        ("next expiry", _next_expiry(led.open_positions)),
     ]
     card_html = "".join(f'<div class="card"><div class="k">{k}</div>'
                         f'<div class="v">{v}</div></div>' for k, v in cards)
