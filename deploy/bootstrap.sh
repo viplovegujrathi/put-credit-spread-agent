@@ -159,10 +159,68 @@ ln -sf "$CONF" /etc/nginx/sites-enabled/pcs
 # TLS must exist before nginx can load a config that references the cert.
 if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
   command -v certbot >/dev/null || apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
-  warn "no certificate for $DOMAIN yet. $DOMAIN must already resolve to this box."
+
+  # Pre-flight. Let's Encrypt allows 5 failed validations per hostname per hour,
+  # so a run that cannot possibly succeed is worth catching before it spends one.
+  say "pre-flight for $DOMAIN"
+
+  RESOLVED="$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)"
+  MYIP="$(curl -fsS --max-time 5 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]' || true)"
+  echo "  $DOMAIN -> ${RESOLVED:-<unresolved>}"
+  echo "  this box  -> ${MYIP:-<unknown>}"
+  [ -n "$RESOLVED" ] || die "$DOMAIN does not resolve. Point it at this box first."
+  if [ -n "$MYIP" ] && [ "$RESOLVED" != "$MYIP" ]; then
+    die "$DOMAIN resolves to $RESOLVED but this box is $MYIP. The challenge would
+  be answered by the wrong machine. Fix DNS (or the elastic IP) first."
+  fi
+
+  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "^Status: active"; then
+    ufw status | grep -qE "^(80|Nginx|Nginx Full)" \
+      || warn "ufw is active and does not obviously allow 80. sudo ufw allow 80,443/tcp"
+  fi
+
+  # Whether the internet can reach port 80 is not answerable from the box, and
+  # it is not worth a third-party proxy to find out -- certbot answers it in one
+  # attempt and the failure below says exactly what to do. The local checks
+  # above are the ones that catch a mistake certbot would misreport.
+
   rm -f /etc/nginx/sites-enabled/pcs          # don't break nginx meanwhile
   nginx -t && systemctl reload nginx
-  certbot --nginx -d "$DOMAIN" --agree-tos --register-unsafely-without-email --non-interactive
+
+  if ! certbot --nginx -d "$DOMAIN" --agree-tos \
+        --register-unsafely-without-email --non-interactive; then
+    cat >&2 <<EOF
+
+!! certbot could not prove you control $DOMAIN.
+
+   "Timeout during connect" means Let's Encrypt could not reach port 80 of this
+   box at all. DNS is fine or you would have seen a different error -- this is
+   almost always the EC2 SECURITY GROUP, which blocks inbound 80/443 by default.
+
+   Open them for this instance, then re-run this script:
+
+     AWS console -> EC2 -> Instances -> select this one -> Security tab
+       -> click its security group -> Inbound rules -> Edit
+       -> Add rule: HTTP  80  Anywhere-IPv4
+       -> Add rule: HTTPS 443 Anywhere-IPv4
+
+   Or, with credentials that can change it:
+
+     SG=\$(aws ec2 describe-instances --instance-ids $(cat /var/lib/cloud/data/instance-id 2>/dev/null || echo YOUR_INSTANCE_ID) \\
+            --query 'Reservations[].Instances[].SecurityGroups[].GroupId' --output text)
+     aws ec2 authorize-security-group-ingress --group-id \$SG --protocol tcp --port 80  --cidr 0.0.0.0/0
+     aws ec2 authorize-security-group-ingress --group-id \$SG --protocol tcp --port 443 --cidr 0.0.0.0/0
+
+   Note: Let's Encrypt allows 5 failed validations per hostname per hour. Do not
+   re-run this in a loop -- confirm the port is open first:
+
+     curl -sS -m 8 -o /dev/null -w '%{http_code}\\n' http://$DOMAIN/
+
+   nginx is untouched and still serving whatever it served before. The agent
+   itself is installed and its timers are running; only the web layer is missing.
+EOF
+    exit 1
+  fi
   ln -sf "$CONF" /etc/nginx/sites-enabled/pcs
 fi
 
