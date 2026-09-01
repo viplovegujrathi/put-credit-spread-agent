@@ -7,6 +7,7 @@
     ./run.py reject  P260831-01 --reason "too close to earnings"
     ./run.py mark                   refresh marks, surface management actions
     ./run.py learn                  what the closed record supports, and self-repair
+    ./run.py doctor                 why has nothing opened? every gate, in order
     ./run.py status                 account + open positions
     ./run.py close  <position-id>   close a paper position at the current mark
     ./run.py dashboard              rebuild dashboard.html
@@ -27,6 +28,7 @@ import sys
 from pcs import (
     chains,
     dashboard,
+    doctor,
     exits,
     learning,
     marketdata,
@@ -490,6 +492,33 @@ def cmd_learn(args, settings: Settings) -> int:
     return 0
 
 
+_MARK = {doctor.BLOCK: "\u2717", doctor.WARN: "!", doctor.OK: "\u2713",
+         doctor.INFO: "\u00b7"}
+
+
+def cmd_doctor(args, settings: Settings) -> int:
+    """Walk every gate between "the market is open" and "a position exists".
+
+    Offline: it reports on the last run rather than performing a new one, which
+    is the question being asked. A flat book looks the same whether the screen
+    found nothing, the master switch is off, or the timer never fired -- this
+    says which.
+    """
+    led = ledger_mod.Ledger.load(settings)
+    sess = session.state_for(settings)
+    checks = doctor.diagnose(led, settings, sess, journal=learning.load())
+
+    print(f"{BAR}\nDOCTOR  {sess.now_et:%Y-%m-%d %H:%M %Z}   {settings.account_label}\n{BAR}")
+    for c in checks:
+        print(f"  {_MARK.get(c.state, ' ')} {c.label:24} {c.detail}")
+        if c.fix:
+            print(f"      -> {c.fix}")
+    print(f"\n{BAR}")
+    print(doctor.verdict(checks))
+    print(BAR)
+    return 1 if any(c.state == doctor.BLOCK for c in checks) else 0
+
+
 def cmd_status(args, settings: Settings) -> int:
     led = ledger_mod.Ledger.load(settings)
     sess = session.state_for(settings)
@@ -791,6 +820,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("learn", help="what the closed record supports; run self-repair")
     p.set_defaults(fn=cmd_learn)
+
+    p = sub.add_parser("doctor", help="why has nothing opened? every gate, in order")
+    p.set_defaults(fn=cmd_doctor)
 
     p = sub.add_parser("status", help="account and positions")
     p.set_defaults(fn=cmd_status)

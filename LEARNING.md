@@ -25,6 +25,7 @@ module. Update it in the same commit as the code it describes.
 | `pcs/session.py` | clock, holidays, quote-quality grade, the opening-range gate | anything that mutates |
 | `pcs/exits.py` | §1.7 exit **decisions** (take profit / stop / defend) — pure | ledger mutation |
 | `pcs/watchlist.py` | what is tracked and why it has not been taken — **observation only** | anything that opens; it must not import `paper_broker` |
+| `pcs/doctor.py` | every gate that stops a fill, in binding order — the "why has nothing opened?" answer | anything that mutates; it is read-only by construction |
 | `pcs/learning.py` | the journal: closed-trade outcomes, operational faults, symbol quarantines | anything that opens or closes; it never writes `Settings` |
 | `pcs/paper_broker.py` | the three open gates, simulated fills, marking, exit **execution** | exit policy |
 | `pcs/ledger.py` | cash, positions, append-only events, all account arithmetic | any policy |
@@ -92,6 +93,7 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
 ./run.py config --set auto_approve=off --set max_collateral_per_trade=750
 ./run.py watch                  # refresh the watchlist -- opens nothing, runs 24/7
 ./run.py learn                  # what the closed record supports + self-repair pass
+./run.py doctor                 # why has nothing opened? every gate, in order
 ./run.py status | dashboard
 ```
 
@@ -116,7 +118,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 179 tests, ruff clean.
+- 197 tests, ruff clean.
 
 ---
 

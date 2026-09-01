@@ -202,6 +202,32 @@ read the findings.
 
 Writes `data/journal.json`. Shown on the dashboard's **Learning** tab.
 
+### `./run.py doctor`
+**Why has nothing opened?** Walks every gate between "the market is open" and "a
+position exists", in the order they actually bind, and names the first one that
+stops a fill. Offline and instant — it reports on the last run rather than
+performing a new one, which is the question being asked.
+
+```bash
+./run.py doctor
+```
+
+Checks, in order: the `paper_trading` master switch → ledger mode → whether
+human approval is required → trading day → opening range → market hours →
+position count → collateral cap → available balance → sector caps → self-repair
+benches → what the last `propose` run produced → whether each systemd unit last
+exited cleanly → any `HELD` or traceback lines in `logs/propose.log`.
+
+Exits `1` if anything is blocking, `0` if nothing is — so it can gate a script.
+
+On the box it also answers the question the dashboard cannot: **did the timer
+actually fire?** A dead scheduler and a quiet market look identical on the page.
+Off a systemd host the unit checks are skipped rather than reported as missing.
+
+"Nothing is blocking" is not "a trade will happen" — the screen may simply have
+found no name that clears the rules, which is a valid outcome. `./run.py propose`
+runs it now and shows the working.
+
 ### `./run.py status`
 Cash, collateral held, capital at risk, available balance, net liquidation, open
 and closed positions. Read-only.
