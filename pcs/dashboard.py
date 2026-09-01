@@ -12,8 +12,8 @@ import datetime as dt
 import html
 
 from .config import DASHBOARD_HTML, STRATEGY, Settings
+from .exits import decide
 from .ledger import Ledger, Position
-from .paper_broker import management_note
 from .proposer import Proposal
 from .session import SessionState
 
@@ -66,13 +66,15 @@ def _sign(v: float, fmt: str = ",.0f", money: bool = True) -> str:
     return f'<span class="{cls}">{txt}</span>'
 
 
-def _positions_table(rows: list[Position]) -> str:
+def _positions_table(rows: list[Position], settings: Settings) -> str:
     if not rows:
         return '<div class="empty">No open positions.</div>'
     body = []
     for p in rows:
-        note = management_note(p)
-        tag = f'<span class="tag act">{_e(note.split(":")[0])}</span>' if note else ""
+        d = decide(p, settings)
+        note = d.reason
+        tag = (f'<span class="tag act">{_e(d.headline)}</span>'
+               if d.act else (f'<span class="tag">{_e(d.headline)}</span>' if note else ""))
         body.append(
             f"<tr><td><code>{_e(p.id)}</code></td><td><b>{_e(p.symbol)}</b>"
             f"<div class='dim' style='font-size:11px'>{_e(p.sector)}</div></td>"
@@ -143,7 +145,7 @@ def render(led: Ledger, props: list[Proposal], settings: Settings,
         ("net liquidation", f"${led.net_liq:,.2f}"),
         ("cash", f"${led.cash:,.2f}"),
         ("collateral at risk", f"${led.collateral_held:,.0f}"),
-        ("buying power", f"${led.buying_power:,.2f}"),
+        ("available balance", f"${led.buying_power:,.2f}"),
         ("realized P&amp;L", _sign(led.realized_pl, ",.2f")),
         ("unrealized P&amp;L", _sign(led.unrealized_pl, ",.2f")),
         ("total return", _sign(led.total_return * 100, ".2f", money=False) + "%"),
@@ -169,13 +171,16 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 ${settings.max_total_collateral:,.0f} cap ({used_pct:.0%} used)</li>
 <li>Open positions: <b>{len(led.open_positions)}</b> of {settings.max_open_positions}
 &middot; max {settings.max_positions_per_sector} per sector &middot; currently: {_e(sectors)}</li>
+<li>Available balance: <b>${led.buying_power:,.2f}</b> (cash ${led.cash:,.2f} less
+${led.capital_at_risk:,.0f} of capital at risk). Nothing opens that needs more free
+balance than this &mdash; the account can always pay its own max loss.</li>
 <li>Per trade (fixed by the strategy): collateral &le;
 ${STRATEGY.max_collateral_per_trade:,.0f}, credit &ge;
 ${STRATEGY.min_credit_per_trade:,.0f}, no upper cap on credit</li>
 </ul></div>
 
 <h2>Open positions</h2>
-{_positions_table(led.open_positions)}
+{_positions_table(led.open_positions, settings)}
 
 <h2>Pending proposals &mdash; awaiting human approval</h2>
 {_proposals_table(props)}

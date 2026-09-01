@@ -127,12 +127,36 @@ strike, width, expiration, credit, collateral. Call out which candidates were
 real about risk. Note what was excluded and why.
 
 ### 7. Management (open positions)
-- Take profit at **50–65%** of max credit; don't hold for the last few dollars
-  of theta.
-- Short strike tested with time left: roll down-and-out for a further credit,
-  or accept the defined max loss. **Never remove the long put leg** — that
-  re-introduces undefined risk.
+Exits are the agent's own decision, and it acts on them. A profit target only
+works if it is taken mechanically, and a stop has to fire while nobody is
+watching — so these do **not** wait for the per-trade approval that entries do.
+
+- **Book profit at 55%** of max credit (the 50–65% band); don't hold for the
+  last few dollars of theta.
+- **Stop out** when buying the spread back costs **2× the credit taken in**, or
+  when the position is down **50% of the defined max loss** — whichever comes
+  first. Both are needed: 2× the credit is unreachable when the credit is large
+  relative to the width, and those spreads have the thinnest collateral.
+- **Short strike breached inside 7 DTE**: close rather than carry assignment
+  risk into expiration. Rolling down-and-out for a credit is the alternative.
+  **Never remove the long put leg** — that re-introduces undefined risk.
 - Recompute the screen on a fixed cadence (weekly is reasonable).
+
+The autonomy is bounded and the bounds are enforced in code, not here: exits can
+only ever **close** (they buy back risk the account already carries, and cannot
+open exposure), they run against a **paper** ledger only — a live close is an
+order and is rendered as a ticket for a human — and they are only ever decided
+off a mark that actually re-priced. They are deliberately not blocked by the
+opening-range rule in §3a; that gate exists to stop *new* risk.
+
+### 7a. Never open beyond the available balance
+No position is opened that the account cannot pay the max loss on. Available
+balance is `cash − capital at risk`, where capital at risk is the **full strike
+width**, not the width net of credit — `cash` already includes the premium and
+collateral is measured net of it, so the obvious formula counts the credit
+twice and overstates the balance. The check runs on the **filled** collateral,
+which is worse than the ticket's whenever the fill is worse than the sizing
+basis, and it binds across a batch.
 
 ### 8. Portfolio-level risk
 Total collateral cap, max open positions, and sector caps are the user's to
@@ -140,10 +164,13 @@ set (`data/settings.json`; defaults for a $3,000 paper account are $2,400 /
 4 positions / 2 per sector). Flag sector concentration rather than silently
 stacking correlated names.
 
-### 9. Never auto-place a trade
+### 9. Never auto-place an opening trade
 This skill proposes candidates and sizing for human review. It does not submit
-orders, even though a broker integration is connected. Every trade needs
-explicit per-trade approval first.
+opening orders, even though a broker integration is connected. Every trade that
+*adds* risk needs explicit per-trade approval first, given in the conversation —
+approval is never inferred from a previous one and never stored.
+
+Exits are the exception, and only in the direction that reduces risk: see §7.
 
 ## Verification
 
@@ -160,3 +187,7 @@ Before presenting results, check:
 - [ ] The natural (worst-case) credit is shown next to the sizing credit.
 - [ ] No trade was described as placed or executed — only proposed.
 - [ ] Nothing was opened inside the 30-minute opening range.
+- [ ] No position was opened that the available balance could not cover, using
+      the filled collateral rather than the ticket's.
+- [ ] Any exit taken was a close, on a fresh mark, against a paper ledger — and
+      was reported with the trigger that fired.

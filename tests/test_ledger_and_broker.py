@@ -55,7 +55,9 @@ def test_open_updates_cash_collateral_and_buying_power(led, settings, live_sessi
     pos = open_approved(led, sp, "Industrials", 1, settings, "P1", "human")
     assert led.cash == round(3000.0 + pos.credit_dollars, 2)
     assert led.collateral_held == pos.collateral
-    assert led.buying_power == round(led.cash - pos.collateral, 2)
+    # buying power nets off the full width at risk, not the credit-adjusted
+    # collateral -- see tests/test_balance.py for why.
+    assert led.buying_power == round(led.cash - pos.width * 100 * pos.contracts, 2)
     assert any(e["kind"] == "position_opened" for e in led.events)
 
 

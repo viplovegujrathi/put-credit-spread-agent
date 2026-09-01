@@ -41,7 +41,8 @@ can replace the screen without touching anything downstream.
 ┌─ 6. Risk manager ────────┐  pcs/risk.py
 │  total collateral cap ·  │  Caps bind across the whole batch, not one
 │  max positions · sector  │  proposal at a time. Correlation warns, never
-│  cap · one per ticker    │  silently blocks.
+│  cap · one per ticker ·  │  silently blocks. The balance floor sits under
+│  available balance       │  all of them: cash − capital at risk.
 └────────────┬─────────────┘
              ▼
 ┌─ 7. Trade proposer ──────┐  pcs/proposer.py
@@ -56,14 +57,20 @@ can replace the screen without touching anything downstream.
     ╚═══════════┬═══════════╝
                 ▼
 ┌─ 8. Execution adapter ───┐  pcs/paper_broker.py
-│  paper fill, deliberately│  Fill is never better than the ticket. In live
-│  worse than the ticket   │  mode this refuses outright — a human places the
-└────────────┬─────────────┘  order at the broker.
+│  paper fill, deliberately│  Fill is never better than the ticket. Three gates
+│  worse than the ticket   │  refuse here: no approver, opening range, or not
+│  · three refusal gates   │  enough balance for the FILLED collateral. Live
+└────────────┬─────────────┘  mode refuses outright — a human places the order.
              ▼
 ┌─ 9. Logger / dashboard ──┐  pcs/ledger.py + pcs/dashboard.py
-│  positions, marks, P&L,  │  Append-only event log. Exit advice per section
-│  exit advice, HTML       │  1.7 is surfaced, never acted on.
-└──────────────────────────┘
+│  positions, marks, P&L,  │  Append-only event log. buying_power nets off the
+│  HTML                    │  full width at risk, never the credit-adjusted
+└────────────┬─────────────┘  collateral (that double-counts the premium).
+             ▼
+┌─ 10. Exit engine ────────┐  pcs/exits.py (policy) + paper_broker (execution)
+│  take profit · stop loss │  The one place the agent acts unasked — and only
+│  · defend · roll advice  │  ever to CLOSE. Paper only; fresh marks only; not
+└──────────────────────────┘  blocked by the opening range. Live ⇒ a ticket.
 ```
 
 ## Design principles

@@ -59,8 +59,8 @@ def test_one_position_per_ticker(settings, live_session):
     assert not check(sp, "Industrials", pv, settings).ok
 
 
-def test_buying_power_is_enforced(settings, live_session):
+def test_available_balance_is_enforced(settings, live_session):
     sp = one_spread(settings, live_session)
     pv = PortfolioView(0, 0, {}, set(), 100, 100)
     v = check(sp, "Industrials", pv, settings)
-    assert not v.ok and any("buying power" in r for r in v.reasons)
+    assert not v.ok and any("available balance" in r for r in v.reasons)

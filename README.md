@@ -36,8 +36,10 @@ and covered by tests:
 | Expiration | **~32 DTE**, a real listed Friday confirmed against the chain |
 | Earnings inside the window | **excluded** |
 | Opening range | **no position opened in the first 30 min** after the bell — paper included |
-| Take profit | 50–65% of max credit |
-| Short strike tested | roll down-and-out or accept the defined loss — **never remove the long leg** |
+| Available balance | **no position opened that the account cannot pay the max loss on** |
+| Take profit | **booked automatically at 55%** of max credit (50–65% band) |
+| Stop loss | **2× the credit taken in**, or 50% of the defined max loss, whichever comes first |
+| Short strike tested inside 7 DTE | **closed** rather than carried into expiration — **never remove the long leg** |
 
 Portfolio caps are yours to set ([`data/settings.json`](pcs/config.py)); the
 defaults for a $3,000 account are $2,400 total collateral, 4 open positions,
@@ -58,8 +60,9 @@ tradeable one.
 | `./run.py propose` | Screen → size → portfolio risk → proposal tickets |
 | `./run.py approve <id> --approver <name>` | **The human gate.** Fills into the paper ledger |
 | `./run.py reject <id> --reason "..."` | Record a decline |
-| `./run.py mark` | Re-mark open positions, surface section-1.7 exit advice |
-| `./run.py status` | Cash, collateral, buying power, net liq, open/closed |
+| `./run.py mark` | Re-mark open positions, then **take any exit that is due** |
+| `./run.py mark --no-auto-exit` | Decide but do not execute — print the exits that are due |
+| `./run.py status` | Cash, collateral, available balance, net liq, open/closed |
 | `./run.py close <position-id>` | Close a paper position at the current mark |
 | `./run.py dashboard` | Rebuild `dashboard.html` |
 | `./run.py universe --refresh` | Refresh the S&P 500 constituent list |
@@ -88,6 +91,80 @@ two-phase by design:
 python3 tools/rh_ingest.py              # 3. normalise into data/rh_chains/
 ./run.py propose --source robinhood     # 4. size on the broker's own book
 ```
+
+---
+
+## An open position can never exceed the available balance
+
+The account can always pay its own max loss. `open_approved` refuses otherwise:
+
+```
+HELD - this position needs $636.12 of free balance and the account has $300.00
+  (cash $300.00 less $0.00 already at risk on 0 open position(s)). Close
+  something or size down -- an account cannot hold more max loss than it can pay.
+  P260831-01 stays pending; the ledger is unchanged.
+```
+
+Three details this depends on:
+
+**Available balance is `cash − capital at risk`, not `cash − collateral`.**
+`cash` already includes the credit received and collateral is measured net of
+that same credit, so the obvious formula counts the premium twice. It reported
+$2,720 free on an account holding $2,610. The number the agent uses nets off the
+full width the book could be called on to pay, which reduces to the intuitive
+statement: *starting cash + realised P/L − collateral − fees*.
+
+**It is checked on the filled collateral, not the ticket's.** A worse fill means
+less credit, which means *more* collateral — a $624 ticket filled at $636 in a
+live run. The gate sees the number the account actually ends up holding, and the
+same check keeps a fill from drifting past the $1,000 per-trade cap.
+
+**It binds across a batch.** Proposals ranked ahead of a given one have already
+spoken for their share of the balance, so five proposals that each fit alone
+cannot all pass.
+
+---
+
+## Profit booking and stop losses are the agent's own decision
+
+`./run.py mark` re-prices every position and then acts:
+
+```
+EXITS TAKEN (2) -- decided and executed by the agent
+  TAKE PROFIT  AAA 97/92 [pos-AAA]  realized $63.88
+      at 64% of max credit (target 55%, band 50%-65%) -- book $64 for a $36
+      debit rather than grind the last 36% against 20 days of gamma
+  STOP LOSS  BBB 97/92 [pos-BBB]  realized $-131.12
+      buying it back costs $231, 2.3x the $100 credit taken in (stop is 2x)
+      -- down $131, cut it
+```
+
+A profit target only works if it is taken mechanically, and a stop has to be
+able to fire while nobody is watching — so exits do **not** go through the
+per-trade approval gate that entries do. The autonomy is bounded in code
+instead:
+
+- **Closing only.** `apply_exits` can only buy back a short the account already
+  carries. It cannot open exposure. The entry gate is untouched.
+- **Paper only.** It refuses a live ledger and prints the closing order for you
+  to place yourself.
+- **Fresh marks only.** A position whose mark failed to update decides nothing.
+- **Not blocked by the opening range.** That gate stops *new* risk; holding a
+  losing position open through the first 30 minutes would be the opposite of
+  risk management.
+
+Two stop conditions, whichever hits first — because `2×` the credit is
+unreachable when the credit is large relative to the width, and those are
+exactly the positions with the thinnest collateral:
+
+| Trigger | Default | Setting |
+|---|---|---|
+| Buyback costs a multiple of the credit | `2.0×` | `stop_loss_credit_multiple` |
+| Down a fraction of the defined max loss | `50%` | `stop_loss_pct_of_max_loss` |
+| Profit booked at | `55%` of max credit | fixed by the strategy |
+
+`--no-auto-exit` decides without executing; `auto_exit: false` in
+`data/settings.json` makes that the default.
 
 ---
 
@@ -149,22 +226,23 @@ pcs/
   screener.py      the two-condition screen; one labelled bucket per name
   chains.py        option chains: yfinance | robinhood snapshot | modeled
   optimizer.py     the strike search and every per-trade constraint
-  risk.py          portfolio-level caps and correlation warnings
+  risk.py          portfolio-level caps, the balance floor, correlation warnings
+  exits.py         take-profit / stop-loss / defend decisions (pure policy)
   ledger.py        paper account, positions, append-only event log
-  paper_broker.py  the approval gate, fill simulation, mark-to-market, exit advice
+  paper_broker.py  the three open gates, fill simulation, marking, exit execution
   proposer.py      human-readable tickets
   pipeline.py      screen -> size -> risk -> propose
   dashboard.py     self-contained dashboard.html
   bs.py            Black-Scholes fallback pricing
 run.py             CLI
 tools/rh_ingest.py Robinhood MCP payloads -> chain snapshots
-tests/             52 tests over the rules that must not silently break
+tests/             99 tests over the rules that must not silently break
 docs/              STRATEGY.md, ARCHITECTURE.md
 LEARNING.md        what building this actually taught us
 ```
 
 ```bash
-python3 -m pytest      # 52 passing
+python3 -m pytest      # 99 passing
 ruff check .
 ```
 

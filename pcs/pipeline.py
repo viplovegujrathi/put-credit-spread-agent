@@ -185,7 +185,8 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
                            f"${contracts * sp.collateral:,.0f} over the per-trade "
                            f"${STRATEGY.max_collateral_per_trade:,.0f} cap")
             continue
-        verdict = risk.check(sp, c.sector, pv, settings, pending, res.session)
+        verdict = risk.check(sp, c.sector, pv, settings, pending, res.session,
+                             contracts=contracts)
         p = Proposal(
             id=f"P{dt.date.today():%y%m%d}-{seq:02d}",
             created_at=dt.datetime.now().isoformat(timespec="seconds"),

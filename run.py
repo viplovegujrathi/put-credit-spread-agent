@@ -26,6 +26,7 @@ import sys
 from pcs import (
     chains,
     dashboard,
+    exits,
     marketdata,
     paper_broker,
     pipeline,
@@ -203,6 +204,10 @@ def cmd_approve(args, settings: Settings) -> int:
         print(f"  {p.id} stays pending. Re-run this same command after "
               f"{sess.settle_until:%H:%M} ET.")
         return 1
+    except paper_broker.InsufficientFunds as exc:
+        print(f"\nHELD - {exc}")
+        print(f"  {p.id} stays pending; the ledger is unchanged.")
+        return 1
     p.status, p.approved_by = "approved", args.approver
     p.approved_at = dt.datetime.now().isoformat(timespec="seconds")
     p.position_id = pos.id
@@ -243,20 +248,48 @@ def cmd_mark(args, settings: Settings) -> int:
     spots = marketdata.live_quote(syms) if sess.is_open else {}
     for s, snap in marketdata.fetch_snapshots(syms, batch_size=len(syms)).items():
         spots.setdefault(s, snap.spot)
-    notes = paper_broker.mark_positions(led, settings, spots)
-    led.save()
+    notes, fresh = paper_broker.mark_positions(led, settings, spots)
+
+    decisions = exits.review(led, settings, fresh)
+    auto = settings.auto_exit and led.mode == "paper" and not args.no_auto_exit
+    actionable = [(p, d) for p, d in decisions if d.act]
+
+    if auto and actionable:
+        acted = paper_broker.apply_exits(led, settings, fresh)
+        led.save()
+        print(f"\nEXITS TAKEN ({len(acted)}) -- decided and executed by the agent")
+        for pos, d in acted:
+            print(f"  {d.headline}  {pos.symbol} {pos.short_strike:g}/{pos.long_strike:g} "
+                  f"[{pos.id}]  realized {_money(pos.realized_pl)}")
+            print(f"      {d.reason}")
+    else:
+        led.save()
+        if actionable:
+            why = ("live mode -- a close is an order, so this is a ticket for you to place"
+                   if led.mode != "paper" else "auto-exit is off")
+            print(f"\nEXITS DUE ({len(actionable)}) -- {why}:")
+            for pos, d in actionable:
+                print(f"  {d.headline}  {pos.symbol} [{pos.id}]: {d.reason}")
+                print(exits.ticket(pos, d))
+
     _print_positions(led)
-    if notes:
-        print("\nMANAGEMENT (section 1.7) -- advice only, nothing is acted on:")
-        for pos, note in notes:
-            print(f"  {pos.symbol} {pos.short_strike:g}/{pos.long_strike:g} [{pos.id}]: {note}")
+    stale = [p for p in led.open_positions if p.id not in fresh]
+    if stale:
+        print(f"\n  ! {len(stale)} position(s) did not re-price; no exit was decided on "
+              f"a stale mark: {', '.join(p.symbol for p in stale)}")
+    watch = [(p, d) for p, d in decisions if not d.act and d.reason]
+    if watch:
+        print("\nWATCHING (no action due):")
+        for pos, d in watch:
+            print(f"  {pos.symbol} {pos.short_strike:g}/{pos.long_strike:g} [{pos.id}]: {d.reason}")
     dashboard.render(led, proposer.load(), settings, sess)
     return 0
 
 
 def _print_positions(led) -> None:
     print(f"\naccount  cash {_money(led.cash)}   collateral held {_money(led.collateral_held)}"
-          f"   buying power {_money(led.buying_power)}")
+          f"   capital at risk {_money(led.capital_at_risk)}")
+    print(f"         available balance {_money(led.buying_power)}")
     print(f"         net liq {_money(led.net_liq)}   "
           f"total return {led.total_return:+.2%}   "
           f"realized {_money(led.realized_pl)}   unrealized {_money(led.unrealized_pl)}")
@@ -388,7 +421,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--reason", default="not taken")
     p.set_defaults(fn=cmd_reject)
 
-    p = sub.add_parser("mark", help="refresh marks and surface management actions")
+    p = sub.add_parser("mark", help="refresh marks, then take any exit that is due")
+    p.add_argument("--no-auto-exit", action="store_true",
+                   help="decide but do not execute: print the exits that are due "
+                        "and leave every position open")
     p.set_defaults(fn=cmd_mark)
 
     p = sub.add_parser("status", help="account and positions")

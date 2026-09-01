@@ -16,6 +16,7 @@ import datetime as dt
 
 from .chains import PutChain, get_chain
 from .config import STRATEGY, Settings
+from .exits import ExitDecision, review
 from .ledger import EXPIRED, Ledger, Position, new_id
 from .optimizer import Spread
 from .session import SessionState, slippage_frac, state_for
@@ -27,6 +28,10 @@ class ApprovalRequired(RuntimeError):
 
 class MarketNotReady(RuntimeError):
     """Raised when a position is opened before the session has settled."""
+
+
+class InsufficientFunds(RuntimeError):
+    """Raised when a position's max loss exceeds the account's free balance."""
 
 
 PAPER_EXTRA_HAIRCUT = 0.10
@@ -53,10 +58,15 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
                   sess: SessionState | None = None) -> Position:
     """Open a paper position.
 
-    Two gates, both enforced here rather than left to instructions: an explicit
-    human approver, and a settled session. The opening-range block applies to
-    paper as well as live -- a paper record built on opening-auction fills
-    would overstate what the live account could have achieved.
+    Three gates, all enforced here rather than left to instructions: an
+    explicit human approver, a settled session, and a balance the account
+    actually has. The opening-range block applies to paper as well as live -- a
+    paper record built on opening-auction fills would overstate what the live
+    account could have achieved.
+
+    The balance gate is checked against the *filled* collateral, not the
+    proposal's. A worse fill means less credit, which means MORE collateral, so
+    a spread sized inside the balance can land outside it.
     """
     if not approved_by:
         raise ApprovalRequired(
@@ -74,6 +84,24 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
     fees = round(spread.fees * contracts, 2)
     gross = round(fill * 100 * contracts, 2)
     collateral = round((spread.width * 100 - fill * 100) * contracts, 2)
+
+    # Opening costs the account `collateral + fees` of free balance: it takes in
+    # `gross - fees` of cash and puts `width x 100 x contracts` at risk.
+    need = round(collateral + fees, 2)
+    have = ledger.buying_power
+    if need > have:
+        raise InsufficientFunds(
+            f"this position needs ${need:,.2f} of free balance and the account has "
+            f"${have:,.2f} (cash ${ledger.cash:,.2f} less ${ledger.capital_at_risk:,.2f} "
+            f"already at risk on {len(ledger.open_positions)} open position(s)). "
+            f"Close something or size down -- an account cannot hold more max loss "
+            f"than it can pay.")
+    if collateral > STRATEGY.max_collateral_per_trade:
+        raise InsufficientFunds(
+            f"filled collateral ${collateral:,.2f} exceeds the ${STRATEGY.max_collateral_per_trade:,.0f} "
+            f"per-trade cap. The ticket was sized at ${spread.collateral * contracts:,.2f} on a "
+            f"${spread.credit:.2f} credit; the fill came in at ${fill:.2f}, and a smaller credit "
+            f"means larger collateral.")
 
     pos = Position(
         id=new_id(), symbol=spread.symbol, sector=sector, expiration=spread.expiration,
@@ -111,10 +139,14 @@ def settle_expired(pos: Position, spot: float) -> tuple[float, str]:
 
 
 def mark_positions(ledger: Ledger, settings: Settings, spots: dict[str, float]
-                   ) -> list[tuple[Position, str]]:
-    """Refresh every open position's mark. Returns (position, note) for anything
-    that needs attention."""
+                   ) -> tuple[list[tuple[Position, str]], set[str]]:
+    """Refresh every open position's mark.
+
+    Returns (notes, fresh) -- `fresh` is the ids that actually re-priced, so an
+    exit decision is never taken off a mark that failed to update.
+    """
     notes: list[tuple[Position, str]] = []
+    fresh: set[str] = set()
     today = dt.date.today()
     for pos in list(ledger.open_positions):
         spot = spots.get(pos.symbol, 0.0)
@@ -132,11 +164,37 @@ def mark_positions(ledger: Ledger, settings: Settings, spots: dict[str, float]
         pos.mark_cost_to_close = debit
         pos.mark_spot = spot or chain.spot or pos.mark_spot
         pos.marked_at = dt.datetime.now().isoformat(timespec="seconds")
+        fresh.add(pos.id)
         note = management_note(pos)
         if note:
             notes.append((pos, note))
     ledger.log("marked", positions=len(ledger.open_positions))
-    return notes
+    return notes, fresh
+
+
+def apply_exits(ledger: Ledger, settings: Settings, fresh: set[str] | None = None
+                ) -> list[tuple[Position, ExitDecision]]:
+    """Act on every exit decision that says to act. Paper only.
+
+    This is the one place the agent closes a position without being asked. That
+    is the point of a stop: it has to fire while nobody is watching. It is
+    still bounded -- it can only ever buy back risk the account already has,
+    and it refuses outright against a live ledger.
+    """
+    if ledger.mode != "paper":
+        raise ApprovalRequired(
+            "auto-exit only runs on a paper ledger; a live close is an order and "
+            "must be placed by a human. Use exits.ticket() for the order to place.")
+    acted: list[tuple[Position, ExitDecision]] = []
+    for pos, d in review(ledger, settings, fresh):
+        if not d.act:
+            continue
+        fees = round(settings.per_contract_fees * pos.contracts, 2)
+        ledger.close_position(pos, d.debit, f"{d.action}: {d.reason}", fees=fees)
+        ledger.log("auto_exit", id=pos.id, symbol=pos.symbol, action=d.action,
+                   debit=d.debit, realized_pl=pos.realized_pl, decided_by="agent")
+        acted.append((pos, d))
+    return acted
 
 
 def management_note(pos: Position, strategy=STRATEGY) -> str:

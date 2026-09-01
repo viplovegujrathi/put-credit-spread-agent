@@ -128,6 +128,14 @@ class Settings:
     # paper included. Enforced as a hard gate in paper_broker.open_approved.
     opening_settle_minutes: int = 30
 
+    # --- exits (section 1.7) ----------------------------------------------
+    # The agent acts on these itself rather than only advising. Closing reduces
+    # risk and never opens it, so it does not go through the entry approval
+    # gate -- but it is paper-only: see pcs/exits.py for the boundary.
+    auto_exit: bool = True               # act on exit decisions in paper mode
+    stop_loss_credit_multiple: float = 2.0    # close if buyback >= 2x the credit
+    stop_loss_pct_of_max_loss: float = 0.50   # ... or if down half the max loss
+
     # --- earnings ---------------------------------------------------------
     earnings_buffer_days: int = 2        # exclude if earnings <= expiry + buffer
 

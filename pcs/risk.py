@@ -33,19 +33,25 @@ class PortfolioView:
     sector_counts: dict[str, int]
     symbols: set[str]
     cash: float
-    buying_power: float
+    buying_power: float          # unencumbered cash, see Ledger.buying_power
 
 
 def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
           pending: list[tuple[str, str, float]] | None = None,
-          sess=None) -> RiskVerdict:
+          sess=None, contracts: int = 1) -> RiskVerdict:
     """`pending` = (symbol, sector, collateral) already accepted this run, so a
-    single batch cannot blow through a cap by being evaluated one at a time."""
+    single batch cannot blow through a cap by being evaluated one at a time.
+
+    `Spread.collateral` is per contract; every cap here is a portfolio total, so
+    the position size has to be multiplied in or a 2-lot is checked as a 1-lot.
+    """
     pending = pending or []
     reasons: list[str] = []
     warnings: list[str] = []
 
-    used = pv.open_collateral + sum(c for _, _, c in pending)
+    need = round(spread.collateral * contracts, 2)
+    committed = sum(c for _, _, c in pending)
+    used = pv.open_collateral + committed
     count = pv.open_count + len(pending)
     sectors = dict(pv.sector_counts)
     symbols = set(pv.symbols)
@@ -53,9 +59,9 @@ def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
         sectors[sec] = sectors.get(sec, 0) + 1
         symbols.add(sym)
 
-    if used + spread.collateral > settings.max_total_collateral:
+    if used + need > settings.max_total_collateral:
         reasons.append(
-            f"portfolio collateral cap: ${used:,.0f} open + ${spread.collateral:,.0f} "
+            f"portfolio collateral cap: ${used:,.0f} open + ${need:,.0f} "
             f"would exceed the ${settings.max_total_collateral:,.0f} limit")
     if count >= settings.max_open_positions:
         reasons.append(f"max open positions ({settings.max_open_positions}) already reached")
@@ -66,9 +72,16 @@ def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
     if spread.symbol in symbols:
         reasons.append(f"already holding a spread on {spread.symbol} "
                        f"(cap {settings.max_positions_per_ticker} per ticker)")
-    if spread.collateral > pv.buying_power:
-        reasons.append(f"insufficient buying power: ${pv.buying_power:,.0f} available, "
-                       f"${spread.collateral:,.0f} required")
+    # The account balance is the floor beneath every other cap: a position can
+    # never commit more max loss than there is free cash to pay it with. Earlier
+    # proposals in this same batch have already spoken for their share.
+    free = round(pv.buying_power - committed, 2)
+    cost = round(need + spread.fees * contracts, 2)
+    if cost > free:
+        reasons.append(
+            f"exceeds available balance: ${cost:,.2f} required, ${free:,.2f} free"
+            + (f" (${pv.buying_power:,.2f} in the account less ${committed:,.2f} "
+               f"already committed to earlier proposals in this batch)" if committed else ""))
 
     # Correlation is a judgement call, not a hard stop -- section 1.8 asks for
     # it to be flagged to the user, not silently blocked.

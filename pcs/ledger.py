@@ -6,10 +6,22 @@ and every outcome stays auditable, so nothing is ever mutated in place without
 an event being written alongside it.
 
 Paper accounting for a short vertical:
-    cash          = starting + credits received - debits paid - fees
-    collateral    = (width x 100 - credit x 100) x contracts, held while open
-    buying power  = cash - collateral held
-    net liq       = cash - cost to close every open spread right now
+    cash           = starting + credits received - debits paid - fees
+    collateral     = (width x 100 - credit x 100) x contracts -- the max loss
+    capital at risk = width x 100 x contracts -- the gross amount the account
+                     can be called on to pay if the spread goes to max loss
+    buying power   = cash - capital at risk
+    net liq        = cash - cost to close every open spread right now
+
+Buying power subtracts capital at risk, NOT collateral. `cash` already
+includes the credit received and `collateral` is measured net of that same
+credit, so `cash - collateral` double-counts the premium and overstates the
+free balance by exactly the credit taken in. The identity that falls out is
+the intuitive one:
+
+    buying power = starting cash + realised P/L - collateral - fees on open
+
+so an account can never commit more than it holds.
 """
 
 from __future__ import annotations
@@ -138,8 +150,15 @@ class Ledger:
         return round(sum(p.collateral for p in self.open_positions), 2)
 
     @property
+    def capital_at_risk(self) -> float:
+        """Gross dollars the open book could be called on to pay -- the full
+        strike width, not the width net of credit."""
+        return round(sum(p.width * 100 * p.contracts for p in self.open_positions), 2)
+
+    @property
     def buying_power(self) -> float:
-        return round(self.cash - self.collateral_held, 2)
+        """Unencumbered cash: what is genuinely available to open against."""
+        return round(self.cash - self.capital_at_risk, 2)
 
     @property
     def net_liq(self) -> float:
