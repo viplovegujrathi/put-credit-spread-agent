@@ -124,8 +124,16 @@ Two timers, doing different jobs:
   30-minute opening gate lifts, so proposals are sized on a live market instead
   of a closing snapshot.
 
-Check the calendar expressions parse to the times you expect before trusting
-them — this was written against the spec, not against a running systemd, and a
+**Check the timezone first.** Every `OnCalendar` here is written in market-local
+time, deliberately: the bell moves against UTC twice a year and never against
+`America/New_York`. EC2 images default to UTC, where `10:15` means 06:15 ET and
+the agent would sit pre-market forever. `bootstrap.sh` sets this, but verify:
+
+```bash
+timedatectl | grep 'Time zone'
+```
+
+Then check the calendar expressions parse to the times you expect — this was written against the spec, not against a running systemd, and a
 malformed `OnCalendar` is accepted at load time and simply never fires:
 
 ```bash

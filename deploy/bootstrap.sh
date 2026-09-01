@@ -90,6 +90,19 @@ install -o "$SVC_USER" -g "$SVC_USER" -m 0644 "$APP/dashboard.html" "$WEB/index.
 echo "  ledger + dashboard initialised"
 
 # --- 5. timers ------------------------------------------------------------
+# Every OnCalendar in this repo is written in market-local time, and DST is why
+# they are not written in UTC: the bell moves twice a year against UTC but never
+# against America/New_York. EC2 defaults to UTC, so this has to be set, not
+# assumed -- the timers otherwise fire ~4 hours before the market opens.
+say "timezone"
+CUR_TZ="$(timedatectl show -p Timezone --value)"
+if [ "$CUR_TZ" = "America/New_York" ]; then
+  echo "  already America/New_York"
+else
+  timedatectl set-timezone America/New_York
+  echo "  $CUR_TZ -> America/New_York"
+fi
+
 say "systemd"
 cp "$APP"/deploy/pcs-*.service "$APP"/deploy/pcs-*.timer /etc/systemd/system/
 for cal in 'Mon..Fri 10..15:05,20,35,50' 'Mon..Fri 09:35,50' 'Mon..Fri 10:15'; do
@@ -99,9 +112,12 @@ echo "  calendar expressions parse"
 systemctl daemon-reload
 systemctl enable --now pcs-mark.timer pcs-propose.timer
 systemctl list-timers 'pcs-*' --no-pager | head -4
+echo "  ^ these must read ET, and 09:35/10:15 must be MORNING of a weekday"
 
+# Run from $APP: pytest resolves its rootdir from the working directory, and the
+# service account has no business being able to read wherever this was invoked.
 say "self-check"
-sudo -u "$SVC_USER" "$APP/.venv/bin/python" -m pytest "$APP/tests" -q 2>&1 | tail -2
+( cd "$APP" && sudo -u "$SVC_USER" "$APP/.venv/bin/python" -m pytest -q 2>&1 | tail -3 )
 
 # --- 6. web ---------------------------------------------------------------
 if [ -z "$DOMAIN" ]; then
