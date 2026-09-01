@@ -12,7 +12,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 
 from . import chains, marketdata, optimizer, proposer, risk, screener, session, universe
-from .config import STRATEGY, Settings
+from .config import Settings
 from .ledger import Ledger
 from .marketdata import Snapshot
 from .optimizer import Spread
@@ -116,11 +116,12 @@ def size_candidates(cands: list[Candidate], res: ScreenResult, settings: Setting
     for c in cands:
         exp = expiration
         ch = chains.get_chain(c.symbol, settings.chain_source, expiration=exp,
-                              target_dte=STRATEGY.target_dte, spot=c.spot)
+                              target_dte=settings.strategy().target_dte, spot=c.spot)
         if not ch.puts:
             out.append(SizedCandidate(c, [], {}, ch.error or "empty chain"))
             continue
-        sps, rej = optimizer.build_spreads(ch, c.spot, settings, res.session)
+        sps, rej = optimizer.build_spreads(ch, c.spot, settings, res.session,
+                                           settings.strategy())
         out.append(SizedCandidate(c, optimizer.best_per_symbol(sps, keep=3), rej, ch.error))
     return out
 
@@ -180,10 +181,11 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
         if blocked and not allow_unknown_earnings:
             skipped.append(f"{c.symbol}: {note}")
             continue
-        if contracts * sp.collateral > STRATEGY.max_collateral_per_trade:
+        cap = settings.strategy().max_collateral_per_trade
+        if contracts * sp.collateral > cap:
             skipped.append(f"{c.symbol}: {contracts} contracts would put collateral "
                            f"${contracts * sp.collateral:,.0f} over the per-trade "
-                           f"${STRATEGY.max_collateral_per_trade:,.0f} cap")
+                           f"${cap:,.0f} cap")
             continue
         verdict = risk.check(sp, c.sector, pv, settings, pending, res.session,
                              contracts=contracts)

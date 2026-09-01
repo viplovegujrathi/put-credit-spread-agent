@@ -1,0 +1,19 @@
+[Unit]
+Description=Mark positions every 15 minutes during US market hours
+
+[Timer]
+# Instance timezone is America/New_York, so this follows DST on its own.
+#
+# systemd repetition (`/N`) applies within ONE field, so a range that walks
+# across the hour boundary cannot be written as `09:35..15:55/15:00` -- the
+# minute field would have to carry the hour. Two rules instead: :05/:20/:35/:50
+# past every hour from 10:00 to 15:00, plus the 09:35 and 09:50 marks the first
+# rule cannot reach. Exits still gate on the real session clock in code, so a
+# firing outside regular hours is refused rather than acted on.
+OnCalendar=Mon..Fri 10..15:05,20,35,50
+OnCalendar=Mon..Fri 09:35,50
+Persistent=false
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

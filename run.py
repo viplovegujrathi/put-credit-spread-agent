@@ -153,7 +153,7 @@ def cmd_propose(args, settings: Settings) -> int:
           f"{sum(1 for p in props if not p.risk_ok)} blocked by portfolio limits)\n{BAR}")
     for p in props:
         print()
-        print(proposer.ticket(p))
+        print(proposer.ticket(p, settings))
     if skipped:
         print(f"\nSKIPPED ({len(skipped)}):")
         for s in skipped:
@@ -162,7 +162,10 @@ def cmd_propose(args, settings: Settings) -> int:
     path = proposer.save(props)
     print(f"\nsaved: {path}")
     clear = [p.id for p in props if p.risk_ok]
-    if clear:
+
+    if clear and not settings.require_approval() and not args.no_auto_open:
+        _auto_open(props, led, settings, res.session)
+    elif clear:
         print(f"\nNothing has been placed. To open one in the paper account:\n"
               f"  ./run.py approve {clear[0]} --approver \"your name\"")
         if not res.session.can_open_positions:
@@ -170,6 +173,72 @@ def cmd_propose(args, settings: Settings) -> int:
                   f"{res.session.open_block_reason.split(' - ')[0]})")
     dashboard.render(led, props, settings, res.session)
     return 0
+
+
+def _record_fill(p, pos, approver: str) -> None:
+    """The bookkeeping that follows any fill, human-approved or not."""
+    p.status, p.approved_by = "approved", approver
+    p.approved_at = dt.datetime.now().isoformat(timespec="seconds")
+    p.position_id = pos.id
+
+
+def _fill_line(p, pos, led) -> str:
+    return (f"  {p.symbol} {pos.short_strike:g}/{pos.long_strike:g}p {pos.expiration}  "
+            f"filled ${pos.credit_open:.2f}  credit {_money(pos.credit_dollars)}  "
+            f"collateral {_money(pos.collateral)}  -> {pos.id}")
+
+
+def _auto_open(props, led, settings: Settings, sess) -> int:
+    """Open every clear proposal, in rank order, with no human in the loop.
+
+    Only reachable when `require_approval()` is False, which is paper-only. The
+    gates inside `open_approved` are unchanged and still do the real work -- the
+    balance floor especially, since opening down the list eats the balance the
+    later proposals were sized against. A refusal is per-proposal: it is
+    reported and the batch continues, because the next one may well be smaller.
+    """
+    print(f"\n{BAR}\nAUTO-OPEN -- human approval is OFF for this paper account\n{BAR}")
+
+    # The opening-range gate lets a fill through outside regular hours, and for a
+    # human that is right: they read the stale-quote banner and decide. With
+    # nobody in the loop there is no one to read it, so the same standard
+    # `apply_exits` holds itself to applies here -- an auto-open against the
+    # afternoon's last print is a fill nobody could have got.
+    if not sess.is_open:
+        print(f"  HELD -- the market is {sess.phase}. Tickets are written and stay "
+              f"pending.\n  Auto-open needs a live market; nobody is here to judge a "
+              f"stale quote.\n  Approve one by hand if you have read the ticket: "
+              f"./run.py approve <id> --approver \"your name\"")
+        return 0
+
+    approver = settings.auto_approver()
+    opened, held = [], []
+    for p in props:
+        if p.status != "pending" or not p.risk_ok:
+            continue
+        try:
+            pos = paper_broker.open_approved(
+                led, Spread(**p.spread), p.sector, p.contracts, settings,
+                proposal_id=p.id, approved_by=approver, sess=sess)
+        except paper_broker.OpenBlocked as exc:
+            held.append((p, str(exc)))
+            continue
+        _record_fill(p, pos, approver)
+        opened.append((p, pos))
+    if opened or held:
+        led.save()
+        proposer.save(props)
+    print(f"  approver recorded as: {approver}")
+    for p, pos in opened:
+        print(_fill_line(p, pos, led))
+    for p, reason in held:
+        print(f"  HELD {p.symbol} [{p.id}] - {reason}")
+    if not opened and not held:
+        print("  nothing clear to open.")
+    else:
+        print(f"\n  cash {_money(led.cash)}   available balance {_money(led.buying_power)}"
+              f"   open {len(led.open_positions)}")
+    return len(opened)
 
 
 def cmd_approve(args, settings: Settings) -> int:
@@ -190,27 +259,33 @@ def cmd_approve(args, settings: Settings) -> int:
             return 1
         print("  ! overridden by the approver")
 
+    approver = args.approver
+    if not approver:
+        if settings.require_approval():
+            print("--approver is required: every trade needs explicit per-trade "
+                  "human approval.")
+            return 1
+        approver = settings.auto_approver()
+
     led = ledger_mod.Ledger.load(settings)
     sess = session.state_for(settings)
     sp = Spread(**p.spread)
-    print(proposer.ticket(p))
-    print(f"\napprover: {args.approver}")
+    print(proposer.ticket(p, settings))
+    print(f"\napprover: {approver}")
     try:
         pos = paper_broker.open_approved(led, sp, p.sector, p.contracts, settings,
-                                         proposal_id=p.id, approved_by=args.approver,
+                                         proposal_id=p.id, approved_by=approver,
                                          sess=sess)
     except paper_broker.MarketNotReady as exc:
         print(f"\nHELD - {exc}")
         print(f"  {p.id} stays pending. Re-run this same command after "
               f"{sess.settle_until:%H:%M} ET.")
         return 1
-    except paper_broker.InsufficientFunds as exc:
+    except (paper_broker.InsufficientFunds, paper_broker.TradingDisabled) as exc:
         print(f"\nHELD - {exc}")
         print(f"  {p.id} stays pending; the ledger is unchanged.")
         return 1
-    p.status, p.approved_by = "approved", args.approver
-    p.approved_at = dt.datetime.now().isoformat(timespec="seconds")
-    p.position_id = pos.id
+    _record_fill(p, pos, approver)
     proposer.save(props)
     led.save()
     haircut = (f"sized at ${sp.credit:.2f}; paper fills take a deliberate haircut"
@@ -254,8 +329,14 @@ def cmd_mark(args, settings: Settings) -> int:
     auto = settings.auto_exit and led.mode == "paper" and not args.no_auto_exit
     actionable = [(p, d) for p, d in decisions if d.act]
 
-    if auto and actionable:
-        acted = paper_broker.apply_exits(led, settings, fresh)
+    if auto and actionable and not sess.is_open:
+        led.save()
+        print(f"\nEXITS DUE ({len(actionable)}) -- HELD, the market is {sess.phase}. "
+              f"A close taken now would be filled at a price nobody could trade on.")
+        for pos, d in actionable:
+            print(f"  {d.headline}  {pos.symbol} [{pos.id}]: {d.reason}")
+    elif auto and actionable:
+        acted = paper_broker.apply_exits(led, settings, fresh, sess)
         led.save()
         print(f"\nEXITS TAKEN ({len(acted)}) -- decided and executed by the agent")
         for pos, d in acted:
@@ -349,6 +430,121 @@ def cmd_dashboard(args, settings: Settings) -> int:
     return 0
 
 
+# The knobs exposed on the CLI. Deliberately a curated list, not every field:
+# the fill model and the liquidity gates are how the paper account stays honest,
+# and they should be edited in the file with a reason, not flipped in passing.
+_CONFIG_GROUPS = (
+    ("Trading", (
+        ("paper_trading", "master switch -- off means nothing opens at all"),
+        ("auto_approve", "off = the agent opens clear proposals itself (paper only)"),
+        ("auto_exit", "act on take-profit / stop decisions automatically"),
+    )),
+    ("Per-trade rules  (blank = use the skill's number)", (
+        ("max_collateral_per_trade", f"skill: {_money(STRATEGY.max_collateral_per_trade)}"),
+        ("max_loss_per_trade", "same thing said the other way; the tighter one binds"),
+        ("min_credit_per_trade", f"skill: {_money(STRATEGY.min_credit_per_trade)}"),
+        ("max_credit_per_trade", "skill: no cap"),
+        ("min_otm_cushion", f"skill: {STRATEGY.min_otm_cushion:.0%} below spot"),
+        ("take_profit_pct", f"skill: {STRATEGY.take_profit_pct:.0%} of max credit"),
+    )),
+    ("Stops", (
+        ("stop_loss_credit_multiple", "close when buyback costs this many x the credit"),
+        ("stop_loss_pct_of_max_loss", "... or when down this fraction of max loss"),
+    )),
+    ("Portfolio caps", (
+        ("max_total_collateral", "across the whole book"),
+        ("max_open_positions", ""),
+        ("max_positions_per_sector", ""),
+        ("max_positions_per_ticker", ""),
+    )),
+    ("Account and ops", (
+        ("mode", "paper | live -- live is refused in code, see paper_broker"),
+        ("account_label", ""),
+        ("starting_cash", "only read when the ledger is first created"),
+        ("chain_source", "yfinance | robinhood | model"),
+        ("opening_settle_minutes", "no opening inside this many minutes of the bell"),
+    )),
+)
+_CONFIG_KEYS = {k for _, rows in _CONFIG_GROUPS for k, _ in rows}
+
+
+def _coerce(key: str, raw: str):
+    """Turn a CLI string into the field's type, using the declared annotation."""
+    ann = str(Settings.__dataclass_fields__[key].type)
+    if raw.strip().lower() in ("none", "null", "") and "None" in ann:
+        return None
+    if "bool" in ann:
+        v = raw.strip().lower()
+        if v in ("true", "on", "yes", "1"):
+            return True
+        if v in ("false", "off", "no", "0"):
+            return False
+        raise ValueError(f"{key} is a switch: use on/off (got {raw!r})")
+    if "int" in ann:
+        return int(raw)
+    if "float" in ann:
+        return float(raw)
+    return raw
+
+
+def cmd_config(args, settings: Settings) -> int:
+    if args.set:
+        for pair in args.set:
+            if "=" not in pair:
+                print(f"expected key=value, got {pair!r}")
+                return 1
+            key, raw = pair.split("=", 1)
+            key = key.strip()
+            if key not in _CONFIG_KEYS:
+                print(f"{key!r} is not settable here. `./run.py config` lists what is; "
+                      f"anything else is edited in data/settings.json with a reason.")
+                return 1
+            try:
+                val = _coerce(key, raw)
+            except ValueError as exc:
+                print(f"{exc}")
+                return 1
+            before = getattr(settings, key)
+            setattr(settings, key, val)
+            print(f"  {key}: {_cfg_val(before)} -> {_cfg_val(val)}")
+        path = settings.save()
+        print(f"\nsaved: {path}")
+
+    print(f"\n{BAR}\nCONFIG  {settings.account_label} [{settings.mode}]\n{BAR}")
+    for title, rows in _CONFIG_GROUPS:
+        print(f"\n{title}")
+        for key, note in rows:
+            print(f"  {key:<28} {_cfg_val(getattr(settings, key)):<12} {note}")
+
+    dev = settings.deviations()
+    print(f"\n{BAR}")
+    if dev:
+        print("MOVED AWAY FROM THE SKILL BASELINE:")
+        for d in dev:
+            print(f"  - {d}")
+        print("\nThese are carried on every ticket and shown on the dashboard, so a "
+              "\nproposal is never read as if it met the standard rule.")
+    else:
+        print("Running the skill's numbers exactly -- no deviations.")
+    if not settings.require_approval():
+        print(f"\nPer-trade human approval is OFF. `./run.py propose` will open every "
+              f"\nclear proposal itself, recording the approver as "
+              f"\n{settings.auto_approver()!r}. This is paper-only: a live ledger "
+              f"\nalways requires a human, and no setting here can change that.")
+    print("\n  ./run.py config --set max_collateral_per_trade=750 --set auto_approve=off")
+    return 0
+
+
+def _cfg_val(v) -> str:
+    if v is None:
+        return "-"
+    if isinstance(v, bool):
+        return "on" if v else "OFF"
+    if isinstance(v, float):
+        return f"{v:g}"
+    return str(v)
+
+
 def cmd_universe(args, settings: Settings) -> int:
     if args.refresh:
         u = universe.refresh_from_wikipedia()
@@ -408,11 +604,14 @@ def main(argv: list[str] | None = None) -> int:
                    help="propose names whose next earnings date could not be confirmed")
     p.add_argument("--max-cache-age", type=float, default=0.0, metavar="MIN",
                    help="reuse cached price snapshots up to this many minutes old")
+    p.add_argument("--no-auto-open", action="store_true",
+                   help="write tickets only, even if auto_approve is on")
     p.set_defaults(fn=cmd_propose)
 
     p = sub.add_parser("approve", help="human gate: open a proposal in the paper account")
     p.add_argument("proposal_id")
-    p.add_argument("--approver", required=True, help="who is approving this trade")
+    p.add_argument("--approver", help="who is approving this trade "
+                   "(required unless auto_approve is on for this paper account)")
     p.add_argument("--override", action="store_true", help="approve despite a portfolio limit")
     p.set_defaults(fn=cmd_approve)
 
@@ -438,6 +637,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("dashboard", help="rebuild dashboard.html")
     p.set_defaults(fn=cmd_dashboard)
+
+    p = sub.add_parser("config", help="view or change the configurable rules")
+    p.add_argument("--set", action="append", metavar="KEY=VALUE",
+                   help="set a value and persist it (repeatable)")
+    p.set_defaults(fn=cmd_config)
 
     p = sub.add_parser("universe", help="inspect or refresh the S&P 500 list")
     p.add_argument("--refresh", action="store_true")

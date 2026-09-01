@@ -4,8 +4,13 @@ Screens the S&P 500 for stocks that are **meaningfully off their 52-week high**
 and **resting near their 50-day moving average**, sizes a **bull put credit
 spread** on each one against a fixed risk rule, and writes a reviewable ticket.
 
-**It proposes. It never places.** Every trade needs explicit per-trade human
-approval, and the approval path currently fills into a **$3,000 paper account**.
+**It proposes, and — on this paper account — it opens.** Per-trade human
+approval is a setting. It ships **on**, and it is currently **off here**, so
+`propose` fills every clear proposal into the **$3,000 paper account** itself.
+That switch is paper-only: a live ledger always requires a human, and the agent
+has no path to placing a live order at all. `data/settings.json` is not in the
+repo, so a fresh clone requires approval until you turn it off — run
+`./run.py config` to see which one you have.
 
 ```bash
 pip install -r requirements.txt
@@ -13,6 +18,7 @@ pip install -r requirements.txt
 ./run.py propose           # screen -> size -> portfolio risk -> tickets
 ./run.py approve P260831-01 --approver "your name"
 ./run.py mark              # refresh marks, surface exit decisions
+./run.py config            # what is configurable, and what has been changed
 open dashboard.html
 ```
 
@@ -45,6 +51,10 @@ Portfolio caps are yours to set ([`data/settings.json`](pcs/config.py)); the
 defaults for a $3,000 account are $2,400 total collateral, 4 open positions,
 2 per sector, 1 per ticker.
 
+The per-trade numbers in that table are the strategy's, and they are the
+default — but they are overridable per account. See
+[Configurable rules](#configurable-rules) below.
+
 Names are never silently blended: every ticker lands in exactly one labelled
 bucket (`PRIMARY`, `NEAR_BELOW_TIGHT`, `BELOW_STRETCHED`, `BROKEN_DOWN`,
 `ABOVE_50DMA`, …) and the excluded buckets are reported alongside the
@@ -58,7 +68,8 @@ tradeable one.
 |---|---|
 | `./run.py screen [--verbose]` | Run the screen over all 503 constituents, print every bucket |
 | `./run.py propose` | Screen → size → portfolio risk → proposal tickets |
-| `./run.py approve <id> --approver <name>` | **The human gate.** Fills into the paper ledger |
+| `./run.py approve <id> --approver <name>` | The human gate. Fills into the paper ledger |
+| `./run.py config [--set k=v]` | View or change the configurable rules |
 | `./run.py reject <id> --reason "..."` | Record a decline |
 | `./run.py mark` | Re-mark open positions, then **take any exit that is due** |
 | `./run.py mark --no-auto-exit` | Decide but do not execute — print the exits that are due |
@@ -168,6 +179,56 @@ exactly the positions with the thinnest collateral:
 
 ---
 
+## Configurable rules
+
+`./run.py config` prints every knob, its current value, and the strategy's own
+number beside it:
+
+```bash
+./run.py config --set max_collateral_per_trade=750 --set min_credit_per_trade=150
+```
+
+| Knob | Default | What it does |
+|---|---|---|
+| `paper_trading` | `on` | Master switch. Off = nothing opens, **exits keep running** |
+| `auto_approve` | `on` here | Off = per-trade human sign-off. **Paper only** |
+| `auto_exit` | `on` | Take profit / cut stops automatically |
+| `max_collateral_per_trade` | strategy's $1,000 | Per-trade max loss |
+| `max_loss_per_trade` | — | The same cap said the other way; the tighter one binds |
+| `min_credit_per_trade` | strategy's $100 | Credit floor |
+| `max_credit_per_trade` | no cap | A ceiling, if you want one |
+| `min_otm_cushion` | strategy's 3% | How far OTM the short strike must sit |
+| `take_profit_pct` | strategy's 55% | Where profit is booked |
+| `stop_loss_credit_multiple` | `2.0×` | |
+| `stop_loss_pct_of_max_loss` | `50%` | |
+
+Unset means *use the strategy's number*, so an untouched install behaves exactly
+as the mandate says. Two properties make this safe to expose:
+
+**Nothing is silently loosened.** Every override is reported by
+`Settings.deviations()`, and that list is printed on the proposal ticket, shown
+in a banner on the dashboard's Rules tab, and echoed by `config`. A ticket sized
+under a $1,500 cap can never be read as one that met the $1,000 rule.
+
+**The approval lock is not configurable.** `require_approval()` returns True
+whenever `mode != "paper"`, whatever `auto_approve` says — and even that is only
+policy. The wall is `open_approved`, which refuses a non-paper ledger outright.
+
+With approval off, `propose` opens the clear proposals in rank order and records
+the approver as `agent (auto-approve, paper)` — never a person's name. Each fill
+still passes all four gates independently, and a refusal is per-proposal:
+
+```
+AUTO-OPEN -- human approval is OFF for this paper account
+  approver recorded as: agent (auto-approve, paper)
+  MRVL 205/195p 2026-10-02  filled $3.64  credit $358  collateral $636  -> ca1bcead
+  HELD AMD [P260831-03] - filled collateral $1,056.00 exceeds the $1,000 per-trade cap.
+```
+
+`--no-auto-open` writes the tickets without opening anything.
+
+---
+
 ## Nothing opens in the first 30 minutes
 
 The opening auction is still clearing, overnight orders are being absorbed, and
@@ -236,13 +297,13 @@ pcs/
   bs.py            Black-Scholes fallback pricing
 run.py             CLI
 tools/rh_ingest.py Robinhood MCP payloads -> chain snapshots
-tests/             99 tests over the rules that must not silently break
+tests/             123 tests over the rules that must not silently break
 docs/              STRATEGY.md, ARCHITECTURE.md
 LEARNING.md        what building this actually taught us
 ```
 
 ```bash
-python3 -m pytest      # 99 passing
+python3 -m pytest      # 123 passing
 ruff check .
 ```
 

@@ -22,16 +22,26 @@ from .optimizer import Spread
 from .session import SessionState, slippage_frac, state_for
 
 
-class ApprovalRequired(RuntimeError):
+class OpenBlocked(RuntimeError):
+    """Base for every reason a fill is refused, so a caller opening a batch can
+    catch one exception and still print the specific reason."""
+
+
+class ApprovalRequired(OpenBlocked):
     """Raised when something tries to open a position without human sign-off."""
 
 
-class MarketNotReady(RuntimeError):
+class MarketNotReady(OpenBlocked):
     """Raised when a position is opened before the session has settled."""
 
 
-class InsufficientFunds(RuntimeError):
+class InsufficientFunds(OpenBlocked):
     """Raised when a position's max loss exceeds the account's free balance."""
+
+
+class TradingDisabled(OpenBlocked):
+    """Raised when the master switch is off. Entries only -- exits keep running,
+    because pausing new risk is not a reason to stop managing existing risk."""
 
 
 PAPER_EXTRA_HAIRCUT = 0.10
@@ -58,9 +68,9 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
                   sess: SessionState | None = None) -> Position:
     """Open a paper position.
 
-    Three gates, all enforced here rather than left to instructions: an
-    explicit human approver, a settled session, and a balance the account
-    actually has. The opening-range block applies to paper as well as live -- a
+    Four gates, all enforced here rather than left to instructions: the master
+    trading switch, a recorded approver, a settled session, and a balance the
+    account actually has. The opening-range block applies to paper as well as live -- a
     paper record built on opening-auction fills would overstate what the live
     account could have achieved.
 
@@ -68,6 +78,11 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
     proposal's. A worse fill means less credit, which means MORE collateral, so
     a spread sized inside the balance can land outside it.
     """
+    if not settings.paper_trading:
+        raise TradingDisabled(
+            "paper trading is switched off -- the screen, sizing and tickets still "
+            "run, but nothing opens. Turn it back on with "
+            "`./run.py config --set paper_trading=true`.")
     if not approved_by:
         raise ApprovalRequired(
             "no approver recorded; every trade needs explicit per-trade human approval")
@@ -96,9 +111,10 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
             f"already at risk on {len(ledger.open_positions)} open position(s)). "
             f"Close something or size down -- an account cannot hold more max loss "
             f"than it can pay.")
-    if collateral > STRATEGY.max_collateral_per_trade:
+    cap = settings.strategy().max_collateral_per_trade
+    if collateral > cap:
         raise InsufficientFunds(
-            f"filled collateral ${collateral:,.2f} exceeds the ${STRATEGY.max_collateral_per_trade:,.0f} "
+            f"filled collateral ${collateral:,.2f} exceeds the ${cap:,.0f} "
             f"per-trade cap. The ticket was sized at ${spread.collateral * contracts:,.2f} on a "
             f"${spread.credit:.2f} credit; the fill came in at ${fill:.2f}, and a smaller credit "
             f"means larger collateral.")
@@ -165,14 +181,15 @@ def mark_positions(ledger: Ledger, settings: Settings, spots: dict[str, float]
         pos.mark_spot = spot or chain.spot or pos.mark_spot
         pos.marked_at = dt.datetime.now().isoformat(timespec="seconds")
         fresh.add(pos.id)
-        note = management_note(pos)
+        note = management_note(pos, settings.strategy())
         if note:
             notes.append((pos, note))
     ledger.log("marked", positions=len(ledger.open_positions))
     return notes, fresh
 
 
-def apply_exits(ledger: Ledger, settings: Settings, fresh: set[str] | None = None
+def apply_exits(ledger: Ledger, settings: Settings, fresh: set[str] | None = None,
+                sess: SessionState | None = None
                 ) -> list[tuple[Position, ExitDecision]]:
     """Act on every exit decision that says to act. Paper only.
 
@@ -180,11 +197,22 @@ def apply_exits(ledger: Ledger, settings: Settings, fresh: set[str] | None = Non
     is the point of a stop: it has to fire while nobody is watching. It is
     still bounded -- it can only ever buy back risk the account already has,
     and it refuses outright against a live ledger.
+
+    The market has to be open. Not because closing is risky, but because a
+    close taken at 22:00 against the afternoon's last print is a fill nobody
+    could have got -- the same reason the paper account haircuts stale quotes
+    instead of pretending they are tradeable. The opening range is fine: a stop
+    must be able to fire there, and quotes are genuinely live.
     """
     if ledger.mode != "paper":
         raise ApprovalRequired(
             "auto-exit only runs on a paper ledger; a live close is an order and "
             "must be placed by a human. Use exits.ticket() for the order to place.")
+    sess = sess or state_for(settings)
+    if not sess.is_open:
+        raise MarketNotReady(
+            f"the market is {sess.phase} -- an exit taken now would be filled at a "
+            f"price nobody could trade on. Exits run during regular hours.")
     acted: list[tuple[Position, ExitDecision]] = []
     for pos, d in review(ledger, settings, fresh):
         if not d.act:

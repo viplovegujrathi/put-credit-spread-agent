@@ -11,7 +11,12 @@ from pcs.config import STRATEGY
 from pcs.exits import DEFEND, HOLD, ROLL, STOP_LOSS, TAKE_PROFIT, decide, review, ticket
 from pcs.ledger import Ledger, Position
 from pcs.optimizer import build_spreads
-from pcs.paper_broker import ApprovalRequired, apply_exits, open_approved
+from pcs.paper_broker import (
+    ApprovalRequired,
+    MarketNotReady,
+    apply_exits,
+    open_approved,
+)
 
 
 def a_position(credit=1.00, width=5.0, contracts=1, debit=None, spot=100.0,
@@ -49,10 +54,19 @@ def test_does_not_book_a_cent_early(settings):
     assert not d.act and d.action == HOLD
 
 
-def test_the_profit_target_comes_from_the_strategy_not_settings(settings):
-    """take_profit_pct is a skill rule -- it must not be quietly settable."""
+def test_the_profit_target_defaults_to_the_skill_and_reports_any_override(settings):
+    """The target is overridable, but never silently: an untouched account uses
+    the skill number, and a changed one shows up in deviations()."""
     assert STRATEGY.take_profit_pct == 0.55
-    assert not hasattr(settings, "take_profit_pct")
+    assert settings.take_profit_pct is None          # untouched
+    assert settings.strategy().take_profit_pct == 0.55
+    assert settings.deviations() == []
+
+    settings.take_profit_pct = 0.40
+    assert settings.strategy().take_profit_pct == 0.40
+    assert any("take profit" in d for d in settings.deviations())
+    pos = a_position(credit=1.00, debit=0.58)        # 42% captured
+    assert decide(pos, settings).action == TAKE_PROFIT
 
 
 # -- stop loss -------------------------------------------------------------
@@ -118,10 +132,25 @@ def test_underwater_near_manage_dte_suggests_a_roll(settings):
 
 
 # -- the boundaries of the autonomy ----------------------------------------
-def test_auto_exit_refuses_to_run_on_a_live_ledger(led, settings):
+def test_auto_exit_refuses_to_run_on_a_live_ledger(led, settings, live_session):
     led.mode = "live"
     with pytest.raises(ApprovalRequired):
-        apply_exits(led, settings)
+        apply_exits(led, settings, sess=live_session)
+
+
+@pytest.mark.parametrize("phase", ["closed", "premarket", "weekend", "holiday"])
+def test_no_exit_is_taken_while_the_market_is_shut(led, settings, live_session, phase):
+    """A close at 22:00 against the afternoon's last print is a fill nobody
+    could have got. The opening range is different -- see the test below."""
+    from pcs.session import SessionState
+    sp = build_spreads(make_chain(spot=100.0), 100.0, settings, live_session)[0][0]
+    pos = open_approved(led, sp, "Industrials", 1, settings, "P1", "human",
+                        sess=live_session)
+    pos.mark_cost_to_close = pos.credit_open * 3          # a screaming stop
+    shut = SessionState(None, False, phase, "stale", "")
+    with pytest.raises(MarketNotReady):
+        apply_exits(led, settings, fresh={pos.id}, sess=shut)
+    assert pos.status == "open"
 
 
 def test_a_stale_mark_decides_nothing(led, settings, live_session):
@@ -132,7 +161,7 @@ def test_a_stale_mark_decides_nothing(led, settings, live_session):
     assert decide(pos, settings).act
     # ...but it did not re-price this run, so it is not in `fresh`
     assert review(led, settings, fresh=set()) == []
-    acted = apply_exits(led, settings, fresh=set())
+    acted = apply_exits(led, settings, fresh=set(), sess=live_session)
     assert acted == [] and pos.status == "open"
 
 
@@ -143,7 +172,7 @@ def test_exits_only_ever_close(led, settings, live_session):
                         sess=live_session)
     before = (len(led.positions), led.capital_at_risk)
     pos.mark_cost_to_close = round(pos.credit_open * 0.4, 2)   # 60% captured
-    acted = apply_exits(led, settings, fresh={pos.id})
+    acted = apply_exits(led, settings, fresh={pos.id}, sess=live_session)
     assert len(acted) == 1
     assert len(led.positions) == before[0]              # nothing new opened
     assert led.capital_at_risk < before[1]              # risk went down
@@ -155,7 +184,7 @@ def test_an_executed_exit_is_logged_as_the_agents_decision(led, settings, live_s
     pos = open_approved(led, sp, "Industrials", 1, settings, "P1", "human",
                         sess=live_session)
     pos.mark_cost_to_close = round(pos.credit_open * 0.4, 2)
-    apply_exits(led, settings, fresh={pos.id})
+    apply_exits(led, settings, fresh={pos.id}, sess=live_session)
     ev = [e for e in led.events if e["kind"] == "auto_exit"]
     assert len(ev) == 1 and ev[0]["decided_by"] == "agent"
     assert pos.status == "closed" and pos.realized_pl > 0
@@ -183,5 +212,5 @@ def test_exits_are_not_blocked_by_the_opening_range(led, settings, live_session)
     pos = open_approved(led, sp, "Industrials", 1, settings, "P1", "human",
                         sess=live_session)
     pos.mark_cost_to_close = pos.credit_open * 2.5
-    acted = apply_exits(led, settings, fresh={pos.id})
+    acted = apply_exits(led, settings, fresh={pos.id}, sess=opening)
     assert len(acted) == 1 and acted[0][1].action == STOP_LOSS

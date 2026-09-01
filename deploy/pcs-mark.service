@@ -1,0 +1,19 @@
+[Unit]
+Description=Put credit spread agent - re-price positions and take due exits
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pcs
+Group=pcs
+WorkingDirectory=/opt/pcs
+ExecStart=/opt/pcs/deploy/pcs-refresh.sh mark
+TimeoutStartSec=600
+
+# This box never needs broker credentials -- it only reads public price data.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pcs/data /opt/pcs/logs /opt/pcs/dashboard.html /var/www/pcs

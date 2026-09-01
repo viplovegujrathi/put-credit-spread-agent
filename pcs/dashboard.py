@@ -69,6 +69,11 @@ white-space:nowrap}
 .rules{background:var(--panel);border:1px solid var(--line);border-radius:11px;
 padding:16px 20px}
 .rules li{margin:5px 0;color:#c6cedb;font-size:13px}
+.rules.dev{border-color:#8a6a1f;background:linear-gradient(180deg,#241d0d,var(--panel))}
+.devh{font-weight:650;color:#f0c85a;font-size:13px;margin-bottom:6px;
+  letter-spacing:.02em}
+.devf{color:#93a0b4;font-size:12px;margin-top:8px}
+.devlink{color:#f0c85a;text-decoration:none;border-bottom:1px dotted #8a6a1f}
 .empty{color:var(--dim);padding:18px;background:var(--panel);
 border:1px solid var(--line);border-radius:11px;font-size:13px}
 code{background:#212936;padding:1.5px 6px;border-radius:4px;font-size:12px;
@@ -365,10 +370,45 @@ def _readiness_panel(led: Ledger, settings: Settings) -> str:
         f"a human places every real trade.</div></div>")
 
 
+def _deviations_panel(settings: Settings) -> str:
+    """What this account has changed, stated as a change rather than as a rule.
+
+    A dashboard that renders the loosened number as if it were the mandate is
+    how a limit quietly stops being a limit.
+    """
+    dev = settings.deviations()
+    if not dev:
+        return ('<div class="rules"><ul><li>Running the strategy\'s numbers exactly '
+                '&mdash; nothing has been overridden.</li></ul></div>')
+    items = "".join(f"<li>{_e(d)}</li>" for d in dev)
+    return (f'<div class="rules dev"><div class="devh">This account is not running '
+            f'the standard rules</div><ul>{items}</ul>'
+            f'<div class="devf">Changed with <code>./run.py config --set</code>. '
+            f'Every proposal sized under these carries the same note.</div></div>')
+
+
 def render(led: Ledger, props: list[Proposal], settings: Settings,
            sess: SessionState, path=DASHBOARD_HTML):
     used_pct = (led.collateral_held / settings.max_total_collateral
                 if settings.max_total_collateral else 0)
+    eff = settings.strategy()
+    n_dev = len(settings.deviations())
+    max_credit_txt = (f", credit &le; ${eff.max_credit_per_trade:,.0f}"
+                      if eff.max_credit_per_trade else ", no upper cap on credit")
+    dev_flag = (f' &middot; <a href="#" data-goto="rules" class="devlink">'
+                f'{n_dev} rule{"s" if n_dev != 1 else ""} overridden</a>' if n_dev else
+                " (the strategy's own numbers)")
+    if settings.require_approval():
+        approval_txt = ("every position that adds risk needs explicit per-trade human "
+                        "sign-off. This agent proposes; it never places an opening order.")
+        pending_txt = "awaiting human approval"
+    else:
+        approval_txt = (f"per-trade human sign-off is <b>OFF</b> for this paper account. "
+                        f"The agent opens clear proposals itself and records the approver "
+                        f"as <code>{_e(settings.auto_approver())}</code>. This is paper-only "
+                        f"&mdash; a live ledger always requires a human, and the agent has "
+                        f"no path to placing a live order at all.")
+        pending_txt = "opened automatically on the next run"
     sectors = ", ".join(f"{k} x{v}" for k, v in sorted(led.sector_counts().items())) or "none"
     cards = [
         ("net liquidation", f"${led.net_liq:,.2f}"),
@@ -414,15 +454,14 @@ ${settings.max_total_collateral:,.0f} cap ({used_pct:.0%} used)</li>
 <li>Available balance: <b>${led.buying_power:,.2f}</b> (cash ${led.cash:,.2f} less
 ${led.capital_at_risk:,.0f} of capital at risk). Nothing opens that needs more free
 balance than this &mdash; the account can always pay its own max loss.</li>
-<li>Per trade (fixed by the strategy): collateral &le;
-${STRATEGY.max_collateral_per_trade:,.0f}, credit &ge;
-${STRATEGY.min_credit_per_trade:,.0f}, no upper cap on credit</li>
+<li>Per trade: collateral &le; ${eff.max_collateral_per_trade:,.0f}, credit &ge;
+${eff.min_credit_per_trade:,.0f}{max_credit_txt}{dev_flag}</li>
 </ul></div>
 
 <h2>Open positions</h2>
 {_positions_table(led.open_positions, settings)}
 
-<h2>Pending proposals &mdash; awaiting human approval</h2>
+<h2>Pending proposals &mdash; {pending_txt}</h2>
 {_proposals_table(props)}
 </section>
 
@@ -436,6 +475,9 @@ ${STRATEGY.min_credit_per_trade:,.0f}, no upper cap on credit</li>
 </section>
 
 <section class="panel" id="p-rules" hidden>
+<h2>Configuration</h2>
+{_deviations_panel(settings)}
+
 <h2>Rules this agent runs under</h2>
 <div class="rules"><ul>
 <li><b>Screen:</b> &ge;{STRATEGY.min_pct_off_52w_high:.0%} off the 52-week high
@@ -443,20 +485,19 @@ ${STRATEGY.min_credit_per_trade:,.0f}, no upper cap on credit</li>
 below the 50-day average. Above the 50dma, or more than
 {abs(STRATEGY.broken_below):.0%} below it, is a different thesis and is excluded.</li>
 <li><b>Structure:</b> bull put credit spread only. No naked puts, no debit spreads.</li>
-<li><b>Sizing:</b> narrowest width that clears ${STRATEGY.min_credit_per_trade:,.0f} credit
-at &ge;{STRATEGY.min_otm_cushion:.0%} OTM, collateral &le;
-${STRATEGY.max_collateral_per_trade:,.0f}. Skip the name rather than moving the
+<li><b>Sizing:</b> narrowest width that clears ${eff.min_credit_per_trade:,.0f} credit
+at &ge;{eff.min_otm_cushion:.0%} OTM, collateral &le;
+${eff.max_collateral_per_trade:,.0f}. Skip the name rather than moving the
 strike to the money.</li>
 <li><b>Expiration:</b> ~{STRATEGY.target_dte} DTE on a real listed Friday, confirmed
 against the live chain. No earnings inside the window.</li>
 <li><b>Opening range:</b> no position is opened in the first
 {settings.opening_settle_minutes} minutes after the bell &mdash; paper included.
 The opening book is the widest and thinnest of the day.</li>
-<li><b>Exit:</b> take profit at {STRATEGY.take_profit_band[0]:.0%}&ndash;
-{STRATEGY.take_profit_band[1]:.0%} of max credit. If the short strike is tested,
+<li><b>Exit:</b> take profit at {eff.take_profit_pct:.0%} of max credit
+(band {eff.take_profit_band[0]:.0%}&ndash;{eff.take_profit_band[1]:.0%}). If the short strike is tested,
 roll down-and-out or accept the defined loss &mdash; never remove the long leg.</li>
-<li><b>Approval:</b> every position that adds risk needs explicit per-trade human
-sign-off. This agent proposes; it never places an opening order.</li>
+<li><b>Approval:</b> {approval_txt}</li>
 <li><b>Exits are the exception:</b> profit is booked and stops are cut by the agent
 itself, because a target only works taken mechanically and a stop must fire while
 nobody is watching. Closing only, paper only, never on a stale mark.</li>
@@ -475,6 +516,9 @@ nobody is watching. Closing only, paper only, never on a stale mark.</li>
     try{{ localStorage.setItem('pcs-tab', name); }}catch(e){{}}
   }}
   tabs.forEach(function(b){{ b.addEventListener('click', function(){{ show(b.dataset.t); }}); }});
+  [].slice.call(document.querySelectorAll('[data-goto]')).forEach(function(a){{
+    a.addEventListener('click', function(e){{ e.preventDefault(); show(a.dataset.goto); }});
+  }});
   var saved;
   try{{ saved = localStorage.getItem('pcs-tab'); }}catch(e){{}}
   if(saved && document.getElementById('p-'+saved)) show(saved);

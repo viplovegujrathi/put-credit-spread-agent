@@ -33,10 +33,16 @@ module. Update it in the same commit as the code it describes.
 
 Everything that can refuse is enforced in code, not in instructions:
 
-1. **Human approval to open** — `paper_broker.open_approved` raises
+0. **Master switch** — `open_approved` raises `TradingDisabled` when
+   `Settings.paper_trading` is off. Entries only; exits keep running.
+1. **Approval to open** — `paper_broker.open_approved` raises
    `ApprovalRequired` with no approver, and refuses outright on a live ledger.
-   Approval is per trade and given in chat; it is never stored, never implied
-   by a previous approval, and never recorded in this file.
+   Whether a *human* must be that approver is `Settings.require_approval()`,
+   which returns True unconditionally when `mode != "paper"` — auto-approve is
+   a paper-only convenience and no setting can lift the live lock. When a human
+   does approve, it is per trade and given in chat: never stored, never implied
+   by a previous approval, and never recorded in this file. Auto-approved fills
+   are recorded as `agent (auto-approve, paper)`, never as a person.
 2. **Opening range** — `open_approved` raises `MarketNotReady` for the first
    `Settings.opening_settle_minutes` (30) after the bell. Paper included.
 3. **Available balance** — `open_approved` raises `InsufficientFunds` when the
@@ -54,7 +60,13 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
 - `buying_power = cash − capital_at_risk`, never `cash − collateral_held`. See §12.
 - A paper fill is never better than the credit the ticket was sized on.
 - Exit decisions are only ever taken off a mark that re-priced this run.
-- `max_credit_per_trade` is `None` on purpose. Do not add a ceiling.
+- `max_credit_per_trade` is `None` in `STRATEGY` on purpose. An *account* may
+  set a ceiling; the mandate must not have one.
+- Read the resolved rules through `Settings.strategy()`, never `STRATEGY`
+  directly, anywhere a user override should apply. `STRATEGY` is the baseline
+  `deviations()` compares against.
+- Every refusal to open subclasses `paper_broker.OpenBlocked`, so a batch can
+  catch one exception and still print the specific reason.
 
 ### Commands
 
@@ -64,6 +76,9 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
 ./run.py approve <id> --approver <name>    # the only path that opens a position
 ./run.py mark                   # re-price, then TAKE any exit that is due
 ./run.py mark --no-auto-exit    # decide but do not execute
+./run.py propose --no-auto-open # tickets only, even with auto_approve on
+./run.py config                 # every knob + what has been changed from the mandate
+./run.py config --set auto_approve=off --set max_collateral_per_trade=750
 ./run.py status | dashboard
 ```
 
@@ -75,7 +90,10 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
   *affordable*. See §10. Nothing has been placed.
 - Placing a live order remains a human action. `open_approved` and `apply_exits`
   both refuse a live ledger in code; that is unchanged by the level upgrade.
-- 99 tests, ruff clean.
+- **Per-trade human approval is OFF** (`auto_approve = true`, paper only), so
+  `./run.py propose` opens the clear proposals itself. `paper_trading` is on.
+  Both are in `data/settings.json`; `./run.py config` prints the truth.
+- 123 tests, ruff clean.
 
 ---
 
@@ -316,9 +334,48 @@ testable without a ledger.
 
 ---
 
+## 14. A configurable rule has to announce that it was configured
+
+The strategy's numbers are now overridable per account (`max_collateral_per_trade`,
+`min_credit_per_trade`, `max_credit_per_trade`, `min_otm_cushion`,
+`take_profit_pct`, and `max_loss_per_trade` as an alias for the collateral cap).
+Making them settable was easy. Making them *safe* to settle turned on three
+things:
+
+**`None` means "use the mandate", not "zero".** An untouched install resolves to
+`STRATEGY` itself — `settings.strategy() is STRATEGY` — so behaviour is
+identical to before the knobs existed and there is no migration.
+
+**Consumers must not be able to tell.** `Settings.strategy()` returns a real
+frozen `Strategy` built with `dataclasses.replace`, so the optimizer, the
+exits module and the broker keep reading the same attributes. The only code that
+knows an override happened is `deviations()`. That kept the change from
+sprawling into every call site as `settings.x or STRATEGY.x`.
+
+**The display is the risk.** A dashboard that renders the loosened number as if
+it were the mandate is how a limit quietly stops being a limit. So the Rules tab
+reads from `settings.strategy()` *and* carries a banner naming every deviation,
+the proposal ticket prints `sized under NON-STANDARD rules`, and `config` ends
+with the same list. Three surfaces, one source: `Settings.deviations()`.
+
+The same reasoning applies to `auto_approve`. Turning per-trade sign-off off is
+a legitimate paper-account convenience, but the two things that must not follow
+from it are (a) reaching a live order and (b) an audit trail that reads as if a
+human looked at the trade. So `require_approval()` ignores the setting entirely
+when `mode != "paper"`, `open_approved` independently refuses a non-paper
+ledger, and the recorded approver is the literal string
+`agent (auto-approve, paper)`.
+
+A related correction: `deploy/pcs-refresh.sh` carried the comment *"Never
+approves anything. Opening a position stays a human action."* That became false
+the moment auto-approve shipped. A stale safety comment is worse than no
+comment, because it is what someone reads instead of checking.
+
+---
+
 ## What the tests actually protect
 
-99 tests, and they are deliberately aimed at the rules that would fail
+123 tests, and they are deliberately aimed at the rules that would fail
 *silently* rather than at coverage:
 
 - every 50dma bucket boundary, so near / stretched / broken / above never blend
@@ -337,3 +394,12 @@ testable without a ledger.
 - a refused open leaves the ledger byte-identical -- no cash moved, no event
 - exit triggers fire on the exact number, and one cent short of it they do not
 - auto-exit refuses a live ledger, and never acts on a stale mark
+- **no setting can lift the approval requirement off a non-paper ledger** —
+  parametrized over `live`/`LIVE`/`real`/`""`, because the check is
+  `mode == "paper"`, not `mode != "live"`
+- an override reaches the resolved strategy *and* shows up in `deviations()`,
+  asserted per field
+- overriding one account never mutates the shared frozen baseline
+- `max_loss_per_trade` and `max_collateral_per_trade` are the same cap, and the
+  tighter of the two binds in both directions
+- the master switch stops entries without stopping exits

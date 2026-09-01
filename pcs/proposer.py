@@ -54,7 +54,7 @@ def rationale_for(sp: Spread, pct_off_high: float, pct_from_dma50: float,
     )
 
 
-def ticket(p: Proposal) -> str:
+def ticket(p: Proposal, settings=None) -> str:
     """The human-readable block a reviewer actually reads before approving."""
     s = p.spread
     warn = "".join(f"\n  ! {w}" for w in p.risk_warnings)
@@ -79,7 +79,18 @@ def ticket(p: Proposal) -> str:
         block.append(f"  warnings:{warn}")
     if not p.risk_ok:
         block.append("  BLOCKED: " + "; ".join(p.risk_reasons))
-    block.append("  -> requires explicit human approval; nothing is placed automatically.")
+
+    # A ticket sized under a loosened rule must never read like one that met the
+    # standard rule, so the deviations travel with it.
+    dev = settings.deviations() if settings is not None else []
+    if dev:
+        block.append("  sized under NON-STANDARD rules:")
+        block.extend(f"    - {d}" for d in dev)
+    if settings is not None and not settings.require_approval():
+        block.append("  -> human approval is OFF for this paper account; the agent "
+                     "opens this itself.")
+    else:
+        block.append("  -> requires explicit human approval; nothing is placed automatically.")
     return "\n".join(block)
 
 

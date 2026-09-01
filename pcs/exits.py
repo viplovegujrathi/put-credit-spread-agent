@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config import STRATEGY, Settings
+from .config import Settings
 from .ledger import Position
 
 TAKE_PROFIT = "take_profit"
@@ -53,13 +53,14 @@ class ExitDecision:
         return self.action.replace("_", " ").upper() if self.act else self.action
 
 
-def decide(pos: Position, settings: Settings, strategy=STRATEGY) -> ExitDecision:
+def decide(pos: Position, settings: Settings, strategy: object | None = None) -> ExitDecision:
     """What to do with one open position, given its current mark.
 
     Order matters: risk first. A position cannot be simultaneously at a profit
     target and at a stop, but checking the loss branches first means no future
     edit can accidentally let a profit rule mask a stop.
     """
+    strategy = strategy or settings.strategy()
     n = pos.contracts
     debit, pl = pos.mark_cost_to_close, pos.open_pl
     credit_in = round(pos.credit_open * 100 * n, 2)

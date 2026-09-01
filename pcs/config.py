@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -66,6 +66,9 @@ class Strategy:
 
 
 STRATEGY = Strategy()
+
+_OVERRIDABLE = ("max_collateral_per_trade", "min_credit_per_trade",
+                "max_credit_per_trade", "min_otm_cushion", "take_profit_pct")
 
 
 # --------------------------------------------------------------------------
@@ -136,6 +139,34 @@ class Settings:
     stop_loss_credit_multiple: float = 2.0    # close if buyback >= 2x the credit
     stop_loss_pct_of_max_loss: float = 0.50   # ... or if down half the max loss
 
+    # --- strategy overrides ------------------------------------------------
+    # STRATEGY holds the skill's numbers. These override them for THIS account.
+    # None means "use the skill value", so an untouched install behaves exactly
+    # as the mandate says. Anything set here is reported as a deviation on the
+    # ticket and the dashboard rather than silently replacing the rule.
+    #
+    # For a credit spread max loss IS the collateral -- (width - credit) x 100.
+    # max_loss_per_trade is offered because that is how people think about it;
+    # whichever of the two is tighter binds.
+    max_collateral_per_trade: float | None = None
+    max_loss_per_trade: float | None = None
+    min_credit_per_trade: float | None = None
+    max_credit_per_trade: float | None = None
+    min_otm_cushion: float | None = None
+    take_profit_pct: float | None = None
+
+    # --- approval ----------------------------------------------------------
+    # The master switch. Off means nothing opens at all: the agent screens,
+    # sizes and writes tickets, and open_approved refuses every fill. Use it to
+    # pause the book without unwinding it -- exits and marking keep running,
+    # because stopping new risk is not a reason to stop managing old risk.
+    paper_trading: bool = True
+
+    # Off means the agent opens clear proposals itself, without per-trade
+    # sign-off. PAPER ONLY -- see require_approval(); a live ledger always
+    # requires a human, and the agent cannot place a live order regardless.
+    auto_approve: bool = False
+
     # --- go-live readiness (pcs/readiness.py) ------------------------------
     # What the broker says, recorded after being checked rather than assumed.
     # Both go stale, so the timestamp is part of the fact.
@@ -147,6 +178,54 @@ class Settings:
 
     # --- earnings ---------------------------------------------------------
     earnings_buffer_days: int = 2        # exclude if earnings <= expiry + buffer
+
+    # -- resolved rules ----------------------------------------------------
+    def strategy(self) -> Strategy:
+        """STRATEGY with this account's overrides applied.
+
+        Returns a real frozen Strategy, so every consumer keeps reading the
+        same attributes and cannot tell the difference -- the only place that
+        knows an override happened is `deviations()`, which reports it.
+        """
+        over = {k: getattr(self, k) for k in _OVERRIDABLE
+                if getattr(self, k) is not None}
+        if self.max_loss_per_trade is not None:
+            cap = min(over.get("max_collateral_per_trade",
+                               STRATEGY.max_collateral_per_trade),
+                      self.max_loss_per_trade)
+            over["max_collateral_per_trade"] = cap
+        return replace(STRATEGY, **over) if over else STRATEGY
+
+    def deviations(self) -> list[str]:
+        """Every rule this account has moved away from the skill baseline."""
+        out = []
+        eff = self.strategy()
+        for k in _OVERRIDABLE:
+            base, now = getattr(STRATEGY, k), getattr(eff, k)
+            if base != now:
+                out.append(f"{k.replace('_', ' ')}: {_fmt(base)} -> {_fmt(now)}")
+        if not self.paper_trading:
+            out.append("paper trading: ON -> OFF (nothing will open)")
+        if self.auto_approve and self.mode == "paper":
+            out.append("per-trade human approval: required -> OFF (paper only)")
+        return out
+
+    def require_approval(self) -> bool:
+        """Whether a human must sign off before a position opens.
+
+        Auto-approve is a paper-only convenience. A live ledger always requires
+        a human, and no setting can change that -- the agent additionally has
+        no path to placing a live order at all.
+        """
+        return not (self.auto_approve and self.mode == "paper")
+
+    def auto_approver(self) -> str:
+        """Who the ledger records when no human signed off.
+
+        Never a person's name. An audit trail that reads like a human approved
+        a trade nobody looked at is worse than no audit trail.
+        """
+        return "agent (auto-approve, paper)"
 
     @classmethod
     def load(cls, path: Path | None = None) -> Settings:
@@ -164,6 +243,14 @@ class Settings:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(asdict(self), indent=2))
         return path
+
+
+def _fmt(v) -> str:
+    if v is None:
+        return "none"
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return f"{v:.0%}" if 0 < v < 1 else f"${v:,.0f}"
+    return str(v)
 
 
 def _validate() -> None:

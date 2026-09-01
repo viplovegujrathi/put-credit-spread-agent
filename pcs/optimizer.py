@@ -180,6 +180,11 @@ def build_spreads(chain: PutChain, spot: float, settings: Settings,
             if collateral > strategy.max_collateral_per_trade:
                 reject(f"collateral ${collateral:.0f} > ${strategy.max_collateral_per_trade:.0f}")
                 continue
+            if (strategy.max_credit_per_trade is not None
+                    and credit_dollars > strategy.max_credit_per_trade):
+                reject(f"credit ${credit_dollars:.0f} > the ${strategy.max_credit_per_trade:.0f} "
+                       f"cap set for this account")
+                continue
             if collateral <= 0:
                 reject("credit exceeds width (bad quote)")
                 continue
