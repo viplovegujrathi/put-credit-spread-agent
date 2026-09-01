@@ -8,6 +8,7 @@ rule, and proposes them for human approval. It never places an order.
 __version__ = "0.1.0"
 
 __all__ = [
+    "authd", "brand", "viewers",
     "bs", "chains", "config", "dashboard", "ledger", "marketdata", "optimizer",
     "paper_broker", "pipeline", "proposer", "risk", "screener", "session",
     "universe",

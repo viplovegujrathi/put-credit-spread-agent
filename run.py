@@ -776,6 +776,69 @@ def cmd_chain_requests(args, settings: Settings) -> int:
     return 0
 
 
+def cmd_viewer(args, settings: Settings) -> int:
+    """Dashboard logins. Add, rotate, list, revoke.
+
+    Every login sees the SAME page. There is no admin tier and no per-user
+    view, because there is nothing to tier: nginx serves one static file and
+    the only dynamic endpoint is the login itself. A viewer can read the
+    account and can do nothing else -- not approve a trade, not change a
+    setting, not reach the agent.
+
+    What they WILL see: the account label, cash, every position, every closed
+    trade and the full event log. Decide that is fine to share before sharing.
+    """
+    from pathlib import Path as _Path
+
+    from pcs import authd, viewers
+    path = authd.VIEWERS_FILE
+    try:
+        if args.action == "list":
+            rows = viewers.load(path)
+            if not rows:
+                print(f"no logins in {path}. Add one with: ./run.py viewer add <name>")
+                return 1
+            print(f"logins that can reach the dashboard ({path}):")
+            for v in rows:
+                print(f"  {v.name}")
+            return 0
+
+        if not args.name:
+            print(f"usage: ./run.py viewer {args.action} <username>")
+            return 1
+
+        if args.action == "add":
+            password = args.password or viewers.generate_password()
+            existed = viewers.add(path, args.name, password)
+            try:
+                domain = _Path("/etc/pcs/domain").read_text().strip()
+            except OSError:
+                domain = ""
+            print(f"\n{'password rotated for' if existed else 'added'}: {args.name}")
+            print(f"  url:      https://{domain or '<your-domain>'}/")
+            print(f"  user:     {args.name}")
+            print(f"  password: {password}")
+            print("\nShown once. It is stored salted and hashed and cannot be read")
+            print("back -- re-run this command to rotate it if it is lost.")
+            print("Send it over something private. A password in a chat log is a")
+            print("password in everyone's chat log.")
+            return 0
+
+        viewers.remove(path, args.name)
+        print(f"revoked: {args.name}")
+        print("Sessions are signed and stateless, so one already open stays valid")
+        print("until it expires. To cut every session now, delete the signing key")
+        print("and restart: sudo rm /etc/pcs/session.key && "
+              "sudo systemctl restart pcs-authd")
+        return 0
+    except viewers.ViewerError as exc:
+        print(f"error: {exc}")
+        return 1
+    except PermissionError:
+        print(f"error: cannot write {path} -- run this with sudo.")
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -860,6 +923,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--expiration")
     p.add_argument("--include-tight", action="store_true")
     p.set_defaults(fn=cmd_chain_requests)
+
+    p = sub.add_parser("viewer", help="dashboard logins: add, list, revoke")
+    p.add_argument("action", choices=["add", "list", "remove"])
+    p.add_argument("name", nargs="?", help="username (not needed for `list`)")
+    p.add_argument("--password", help="set one instead of generating a password")
+    p.set_defaults(fn=cmd_viewer)
 
     args = ap.parse_args(argv)
     settings = Settings.load()

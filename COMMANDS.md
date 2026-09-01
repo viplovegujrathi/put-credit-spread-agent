@@ -74,7 +74,7 @@ sudo PCS_DOMAIN=your.domain ./deploy/bootstrap.sh
 
 That is the whole install. It creates the `pcs` system account, installs to
 `/opt/pcs`, builds the venv, seeds a paper `settings.json`, initialises the ledger
-and dashboard, enables all three timers, sets up nginx with basic auth and a
+and dashboard, enables all three timers, starts the login service, sets up nginx and a
 Let's Encrypt certificate, and finishes by running the test suite **on the box**.
 
 It **prints a generated dashboard password once**. Save it then, or reset it —
@@ -385,22 +385,23 @@ One per task: `propose.log`, `mark.log`, `watch.log`.
 
 ### Dashboard logins — share, rotate, revoke
 
-`deploy/viewer.sh` manages who can reach the dashboard. Use it instead of
-calling `htpasswd` by hand: `htpasswd -c` **truncates** the file, so one stray
-`-c` silently deletes every other login including your own. The script only
-reaches for `-c` when the file genuinely does not exist.
+The dashboard is behind a real login page, not the browser's credential popup.
+nginx authorises every request with an `auth_request` subrequest to `pcs-authd`,
+a small service on loopback that verifies the password and issues a signed
+session cookie. Basic auth was dropped because its `WWW-Authenticate` header is
+what summons the browser dialog, and that dialog cannot be styled.
 
-Add a login for someone else — the password is generated on the box and printed
-once:
+Logins live in `/etc/pcs/viewers`, salted and hashed with PBKDF2. Use the
+script rather than editing the file:
 
 ```bash
 sudo /opt/pcs/deploy/viewer.sh add tester
 ```
 
-Set the password yourself instead:
+Set the password yourself instead of generating one:
 
 ```bash
-sudo /opt/pcs/deploy/viewer.sh add tester --pass 'a-strong-password'
+sudo /opt/pcs/deploy/viewer.sh add tester --password 'a-strong-password'
 ```
 
 Re-running `add` for an existing name **rotates** that password rather than
@@ -410,34 +411,34 @@ adding a duplicate — that is also how you reset your own:
 sudo /opt/pcs/deploy/viewer.sh add pcs
 ```
 
-See who can log in, and revoke:
+See who can log in:
 
 ```bash
 sudo /opt/pcs/deploy/viewer.sh list
 ```
 
+Revoke. Removing the last remaining login is refused, because the fix would
+need a shell on the box:
+
 ```bash
 sudo /opt/pcs/deploy/viewer.sh remove tester
 ```
 
-Revocation takes effect on the next request. The script refuses to delete the
-last remaining login, because an empty `.htpasswd` locks everyone out of the
-dashboard and the fix needs a shell on the box.
-
-**What a shared login can do.** Nothing but read. nginx serves one static file
-with `try_files ... =404`, so there is no write path through the web at all — a
-viewer cannot approve a trade, change a setting, or reach the agent. Every login
-sees the same page; there is no admin tier because there is nothing to tier.
-
-**What a shared login can see.** The account label, cash, every open and closed
-position, and the full event log. It is a paper account, but there is no
-redaction mode — decide that is fine to share before sharing it.
-
-Who used which login shows up in nginx's access log as `$remote_user`:
+Sessions are signed and stateless, so revoking a viewer stops the next login
+but leaves a session they already hold valid until it expires (7 days). To cut
+every session on the box immediately:
 
 ```bash
-sudo awk '{print $3}' /var/log/nginx/access.log | sort | uniq -c | sort -rn
+sudo rm /etc/pcs/session.key && sudo systemctl restart pcs-authd
 ```
+
+Everyone signs out, including you. If the login page is unreachable, the agent
+itself is unaffected — timers, marks and exits do not go through it:
+
+```bash
+sudo journalctl -u pcs-authd -n 50 --no-pager
+```
+
 
 ---
 

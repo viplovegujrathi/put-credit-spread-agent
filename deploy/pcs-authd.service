@@ -1,0 +1,33 @@
+[Unit]
+Description=Put credit spread agent - dashboard login service
+After=network.target
+Before=nginx.service
+
+[Service]
+Type=simple
+User=pcs
+Group=pcs
+WorkingDirectory=/opt/pcs
+ExecStart=/opt/pcs/.venv/bin/python -m pcs.authd
+Restart=on-failure
+RestartSec=2
+
+Environment=HOME=/opt/pcs
+Environment=PCS_VIEWERS=/etc/pcs/viewers
+Environment=PCS_SESSION_KEY=/etc/pcs/session.key
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_INET AF_UNIX
+# It listens on loopback only; nothing it does needs to reach the network.
+IPAddressAllow=localhost
+IPAddressDeny=any
+# The signing key is created on first start, so /etc/pcs must be writable.
+# Nothing else is: this process must never be able to touch the ledger.
+ReadWritePaths=/etc/pcs
+
+[Install]
+WantedBy=multi-user.target

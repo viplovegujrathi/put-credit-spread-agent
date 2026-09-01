@@ -165,20 +165,63 @@ if [ -f "$CONF" ] && ! grep -q "put credit spread agent" "$CONF"; then
   die "$CONF exists and was not written by this script -- refusing to overwrite it"
 fi
 
-# Basic auth is not optional: this page shows positions and balances.
-HT=/etc/nginx/.htpasswd
-if [ -s "$HT" ]; then
-  echo "  htpasswd exists -- left untouched"
+# A login is not optional: this page shows positions and balances.
+#
+# The login service verifies against /etc/pcs/viewers and signs sessions with
+# /etc/pcs/session.key. Both live outside $APP, which is rsynced with --delete
+# and would erase them on the next redeploy -- and a wiped session key logs
+# everyone out while a wiped viewers file locks everyone out.
+install -d -m 0755 /etc/pcs
+VIEWERS=/etc/pcs/viewers
+if [ -s "$VIEWERS" ]; then
+  echo "  logins exist -- left untouched"
 else
   PCS_USER="${PCS_USER:-pcs}"
-  PCS_PASS="${PCS_PASS:-$(head -c 18 /dev/urandom | base64 | tr -d '/+=' )}"
-  htpasswd -bc "$HT" "$PCS_USER" "$PCS_PASS" >/dev/null 2>&1
-  chown root:www-data "$HT"; chmod 640 "$HT"
-  echo "  dashboard login -> user: $PCS_USER   password: $PCS_PASS"
+  OUT="$("$APP/.venv/bin/python" "$APP/run.py" viewer add "$PCS_USER" \
+         ${PCS_PASS:+--password "$PCS_PASS"})" || die "could not create the first login"
+  echo "$OUT" | sed 's/^/  /'
   echo "  (shown once; store it in your password manager now)"
 fi
+chown root:"$SVC_USER" "$VIEWERS" 2>/dev/null || true
+chmod 640 "$VIEWERS"
 
-install -o "$SVC_USER" -g "$SVC_USER" -m 0644 "$APP/deploy/401.html" "$WEB/401.html"
+# .htpasswd is no longer consulted by anything. Left in place rather than
+# deleted: removing a credential file the operator may still recognise, without
+# being asked, is not this script's call.
+if [ -f /etc/nginx/.htpasswd ]; then
+  warn "/etc/nginx/.htpasswd is no longer used -- logins now live in $VIEWERS."
+  warn "Re-add anyone who needs access:  sudo $APP/deploy/viewer.sh add <name>"
+fi
+
+say "login service"
+cp "$APP/deploy/pcs-authd.service" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now pcs-authd >/dev/null 2>&1 || true
+# The signing key is created by the service on first start; make sure it can.
+chown -R root:"$SVC_USER" /etc/pcs 2>/dev/null || true
+chmod 750 /etc/pcs
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -fsS -o /dev/null "http://127.0.0.1:8765/login" 2>/dev/null && break
+  sleep 0.5
+done
+curl -fsS -o /dev/null "http://127.0.0.1:8765/login" 2>/dev/null \
+  && echo "  pcs-authd is answering on 127.0.0.1:8765" \
+  || warn "pcs-authd did not answer. sudo journalctl -u pcs-authd -n 50"
+
+# Rate-limit zone for the login form. Must be at http{} scope, so it cannot
+# live in the vhost file.
+cat > /etc/nginx/conf.d/pcs-limit.conf <<'NGINX'
+# Login attempts, per client address. The password verify is a deliberately
+# slow PBKDF2, so this caps connection volume rather than guess rate.
+limit_req_zone $binary_remote_addr zone=pcslogin:1m rate=10r/m;
+NGINX
+
+# Generated from the same stylesheet and mark as the login page it stands in
+# for -- served by nginx when pcs-authd itself is unreachable.
+"$APP/.venv/bin/python" -c 'from pcs import authd; print(authd.error_page())' \
+  > "$WEB/50x.html"
+chown "$SVC_USER:$SVC_USER" "$WEB/50x.html"; chmod 0644 "$WEB/50x.html"
+
 sed "s/PCS_DOMAIN/$DOMAIN/g" "$APP/deploy/nginx-pcs.conf" > "$CONF"
 ln -sf "$CONF" /etc/nginx/sites-enabled/pcs
 

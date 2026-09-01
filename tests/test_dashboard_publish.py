@@ -11,7 +11,7 @@ import datetime as dt
 
 import pytest
 
-from pcs import dashboard
+from pcs import brand, dashboard
 from pcs.ledger import Ledger
 from pcs.session import SessionState
 
@@ -69,12 +69,12 @@ def test_the_icon_points_up():
     """It used to end lower than it started -- a declining chart on an agent
     that sells puts into a bounce. Last point must sit above the first (SVG y
     grows downward, so 'above' is a smaller number)."""
-    pts = dashboard._MARK_LINE.replace("M", "").split("L")
+    pts = brand.MARK_LINE.replace("M", "").split("L")
     assert _y(pts[-1]) < _y(pts[0])
 
 
 def test_the_logo_and_the_favicon_cannot_drift():
     """They were two separate string literals drawing the same path."""
-    assert dashboard._MARK_LINE in dashboard.LOGO_SVG
+    assert brand.MARK_LINE in brand.LOGO_SVG
     import urllib.parse
-    assert dashboard._MARK_LINE in urllib.parse.unquote(dashboard._favicon())
+    assert brand.MARK_LINE in urllib.parse.unquote(brand.favicon())

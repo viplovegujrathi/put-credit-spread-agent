@@ -31,6 +31,9 @@ module. Update it in the same commit as the code it describes.
 | `pcs/ledger.py` | cash, positions, append-only events, all account arithmetic | any policy |
 | `pcs/pipeline.py` | wiring: screen → shortlist → size → earnings → propose | new rules |
 | `pcs/proposer.py` / `pcs/dashboard.py` | proposal records + tickets; the HTML view | logic of any kind |
+| `pcs/brand.py` | the mark: logo, favicon, the one chart path | anything with dependencies |
+| `pcs/viewers.py` | dashboard logins: PBKDF2 hash, verify, add, revoke | anything about sessions |
+| `pcs/authd.py` | the login page, the session cookie, nginx's `auth_request` | anything about trading |
 
 ### The gates, and where each one lives
 
@@ -74,9 +77,13 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
   `Settings`, never touches `STRATEGY`, and never opens or closes a position.
   A quarantine is one-directional — it can only remove a candidate — and it
   expires on its own. See §16.
-- `htpasswd -c` TRUNCATES the password file. Never call it against an existing
-  `.htpasswd` — one stray `-c` deletes every login including your own. Use
-  `deploy/viewer.sh`, which only reaches for `-c` when the file does not exist.
+- Logins are `/etc/pcs/viewers` (PBKDF2, `pcs/viewers.py`), not `.htpasswd`.
+  `htpasswd` is gone on purpose: its `-c` flag TRUNCATES the file it is given,
+  so one stray `-c` deleted every login including your own. `viewers.add()`
+  cannot express that operation at all.
+- `/etc/pcs/viewers` and `/etc/pcs/session.key` live outside `$APP` because
+  `$APP` is rsynced with `--delete`. A wiped key logs everyone out; a wiped
+  viewers file locks everyone out.
 - Anything written on the box by its own timers (`data/ledger.json`,
   `data/watchlist.json`, `data/journal.json`, `data/settings.json`) must be in
   BOTH `.gitignore` and the `rsync --delete` excludes in `deploy/bootstrap.sh`.
@@ -121,7 +128,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 206 tests, ruff clean.
+- 250 tests, ruff clean.
 
 ---
 
@@ -543,6 +550,17 @@ froze at install time -- `propose` opened four positions and the dashboard kept
 showing an empty book, with the header timestamp moving only on redeploys.
 `render()` now publishes to `config.WEB_INDEX` atomically on every call and
 warns on stderr if it cannot. Any new writer of the page must publish too.
+
+**HTTP Basic auth cannot be made attractive.** The credential dialog is browser
+chrome: no CSS reaches it, no markup replaces it, and nginx cannot suppress the
+`WWW-Authenticate` header that summons it. A styled login page therefore is not
+a CSS job -- it requires a form, which requires something server-side that can
+verify a password and issue a session. That is `pcs/authd.py`: `auth_request`
+to a loopback service, PBKDF2 credentials in `/etc/pcs/viewers`, and an
+HMAC-signed stateless cookie. Consequences worth remembering: a single session
+cannot be revoked early (rotate `/etc/pcs/session.key` to cut all of them), and
+both that key and the viewers file must live outside `$APP` because `$APP` is
+rsynced with `--delete`.
 
 ## 17. A dark dashboard is a preference, not a default
 
