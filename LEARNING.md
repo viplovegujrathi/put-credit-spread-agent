@@ -121,7 +121,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 197 tests, ruff clean.
+- 200 tests, ruff clean.
 
 ---
 

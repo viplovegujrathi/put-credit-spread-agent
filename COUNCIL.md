@@ -103,8 +103,11 @@ deploy, and it is the one that did not report.
 
 ## Status
 
-Nothing in this document has been implemented. It is a record of what was
-found, not a changelog. Operator findings 2, 3 and 4 are the ones that can
+Operator finding 6 is **partly done**: `Entry.blockers` (and `reason` when
+there are no blockers) now render as a visible line on each watchlist row
+instead of a hover tooltip, pinned by three tests. `pop_est` and the earnings
+*date* are still dropped. Nothing else in this document has been implemented;
+it is a record of what was found, not a changelog. Operator findings 2, 3 and 4 are the ones that can
 cost money silently and should be taken first — all three are variants of the
 same defect: **the page cannot distinguish "nothing happened" from "nothing
 ran."**

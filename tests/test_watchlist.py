@@ -164,3 +164,44 @@ def test_it_round_trips_through_disk(settings, led, live_session, tmp_path):
 
 def test_loading_a_missing_file_is_not_an_error(tmp_path):
     assert watchlist.load(tmp_path / "nope.json") is None
+
+
+# --- the dashboard must say WHY a name is not ready -------------------------
+def _entry(**kw):
+    base = {"symbol": "TST", "name": "Test Co", "sector": "Energy",
+            "signal": watchlist.BLOCKED, "reason": "", "bucket": PRIMARY,
+            "spot": 100.0, "dma50": 104.0, "pct_from_dma50": -0.04,
+            "pct_off_high": -0.22}
+    return watchlist.Entry(**{**base, **kw})
+
+
+def _panel(monkeypatch, entry):
+    from pcs import dashboard, learning
+    wl = watchlist.Watchlist(generated_at="2026-09-01T14:00:00", quote_quality="live",
+                             phase="open", tradeable=True, entries=[entry])
+    monkeypatch.setattr(dashboard.watchlist, "load", lambda: wl)
+    monkeypatch.setattr(learning, "load", lambda path=None: learning.Journal())
+    return dashboard._watchlist_panel()
+
+
+def test_a_blocked_name_shows_the_risk_reasons_on_the_row(monkeypatch):
+    """These come from risk.check() and were computed and then discarded. A
+    name sitting BLOCKED for a week with no reason cannot tell you whether
+    closing one winner would unblock it or whether nothing would."""
+    html = _panel(monkeypatch, _entry(blockers=["sector cap: Energy already has 2",
+                                                "balance floor: $180 free"]))
+    assert "sector cap: Energy already has 2" in html
+    assert "balance floor: $180 free" in html
+
+
+def test_the_reason_is_shown_when_there_are_no_risk_blockers(monkeypatch):
+    """NO_FIT and EARNINGS never reach risk.check(), so `blockers` is empty and
+    `reason` is the only account of why the name is not ready."""
+    html = _panel(monkeypatch, _entry(signal=watchlist.NO_FIT,
+                                      reason="no width clears $100 credit"))
+    assert "no width clears $100 credit" in html
+
+
+def test_the_reason_is_escaped(monkeypatch):
+    html = _panel(monkeypatch, _entry(blockers=["<script>x</script>"]))
+    assert "<script>" not in html

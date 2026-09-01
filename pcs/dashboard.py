@@ -202,6 +202,8 @@ border-radius:6px;white-space:nowrap;cursor:help}
 .s-earn {background:var(--pinkbg);color:var(--pink);border:1px solid var(--pinkln)}
 .s-nofit{background:var(--chip);color:var(--dim);border:1px solid var(--line)}
 .s-near {background:var(--chip);color:var(--dim);border:1px solid var(--line)}
+.why{display:block;margin-top:5px;font-size:12px;color:var(--dim);
+line-height:1.45;white-space:normal;max-width:34ch}
 .wnote{font-size:12px;color:var(--warn);background:var(--warnbg);
 border:1px solid var(--warnln);border-radius:10px;padding:9px 12px;margin-bottom:12px;
 line-height:1.5}
@@ -603,8 +605,14 @@ def _watchlist_panel() -> str:
 
     rows = []
     for e in wl.entries:
-        sig = (f'<span class="sig {_SIG_CLASS.get(e.signal, "")}" '
-               f'title="{_e(e.reason)}">{_e(e.signal.replace("_", " "))}</span>')
+        # `blockers` holds the real reasons from risk.check() and used to be
+        # computed and thrown away, with `reason` reachable only by hovering.
+        # A name could then sit BLOCKED for a week with no way to tell whether
+        # closing one winner would unblock it or whether nothing would.
+        why = "; ".join(e.blockers) if e.blockers else e.reason
+        sig = (f'<span class="sig {_SIG_CLASS.get(e.signal, "")}">'
+               f'{_e(e.signal.replace("_", " "))}</span>'
+               + (f'<span class="why">{_e(why)}</span>' if why else ""))
         if e.has_spread:
             spread = f"{e.short_strike:g}/{e.long_strike:g}p"
             prem = (f'<b>${e.credit_dollars:,.0f}</b>'
