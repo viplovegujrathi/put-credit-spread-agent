@@ -57,10 +57,10 @@ mkdir -p "$APP/data" "$APP/logs"
 say "virtualenv"
 [ -x "$APP/.venv/bin/python" ] || python3 -m venv "$APP/.venv"
 "$APP/.venv/bin/pip" install -q --upgrade pip
-"$APP/.venv/bin/pip" install -q -r "$APP/requirements.txt"
-# pytest is not a runtime dependency, but the box should be able to prove the
-# risk rules still hold after a deploy without needing a second toolchain.
-"$APP/.venv/bin/pip" install -q pytest
+# requirements-dev pulls in requirements plus pytest/ruff. The test tools are
+# not needed at runtime, but the box should be able to prove the risk rules
+# still hold after a deploy without needing a second toolchain.
+"$APP/.venv/bin/pip" install -q -r "$APP/requirements-dev.txt"
 echo "  $("$APP/.venv/bin/python" --version)"
 
 # --- 4. account state (created once, then left alone) ---------------------
