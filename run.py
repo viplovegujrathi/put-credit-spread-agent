@@ -116,7 +116,7 @@ def cmd_propose(args, settings: Settings) -> int:
     print(BAR)
     print(f"PROPOSE  {res.session.now_et:%Y-%m-%d %H:%M %Z}")
     print(f"account: {settings.account_label} [{led.mode}]   cash {_money(led.cash)}   "
-          f"buying power {_money(led.buying_power)}   open {len(led.open_positions)}")
+          f"available balance {_money(led.buying_power)}   open {len(led.open_positions)}")
     print(BAR)
     for w in res.warnings:
         print(f"  ! {w}")
@@ -219,7 +219,7 @@ def cmd_approve(args, settings: Settings) -> int:
     print(f"\nPAPER FILL  position {pos.id}")
     print(f"  filled at ${pos.credit_open:.2f} credit ({haircut})")
     print(f"  net credit {_money(pos.credit_dollars)}   collateral {_money(pos.collateral)}")
-    print(f"  cash {_money(led.cash)}   buying power {_money(led.buying_power)}")
+    print(f"  cash {_money(led.cash)}   available balance {_money(led.buying_power)}")
     dashboard.render(led, props, settings, session.state_for(settings))
     return 0
 
