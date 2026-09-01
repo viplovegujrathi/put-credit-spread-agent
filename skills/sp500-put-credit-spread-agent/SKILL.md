@@ -131,8 +131,9 @@ Exits are the agent's own decision, and it acts on them. A profit target only
 works if it is taken mechanically, and a stop has to fire while nobody is
 watching — so these do **not** wait for the per-trade approval that entries do.
 
-- **Book profit at 55%** of max credit (the 50–65% band); don't hold for the
-  last few dollars of theta.
+- **Book profit at 50%** of max credit (the 50–75% band); don't hold for the
+  last few dollars of theta. The trigger is the band's lower edge — the upper
+  edge is the line a position should never still be held past, not a target.
 - **Stop out** when buying the spread back costs **2× the credit taken in**, or
   when the position is down **50% of the defined max loss** — whichever comes
   first. Both are needed: 2× the credit is unreachable when the credit is large

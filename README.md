@@ -43,7 +43,7 @@ and covered by tests:
 | Earnings inside the window | **excluded** |
 | Opening range | **no position opened in the first 30 min** after the bell — paper included |
 | Available balance | **no position opened that the account cannot pay the max loss on** |
-| Take profit | **booked automatically at 55%** of max credit (50–65% band) |
+| Take profit | **booked automatically at 50%** of max credit (50–75% band) |
 | Stop loss | **2× the credit taken in**, or 50% of the defined max loss, whichever comes first |
 | Short strike tested inside 7 DTE | **closed** rather than carried into expiration — **never remove the long leg** |
 
@@ -137,7 +137,7 @@ cannot all pass.
 ```
 EXITS TAKEN (2) -- decided and executed by the agent
   TAKE PROFIT  AAA 97/92 [pos-AAA]  realized $63.88
-      at 64% of max credit (target 55%, band 50%-65%) -- book $64 for a $36
+      at 64% of max credit (target 50%, band 50%-75%) -- book $64 for a $36
       debit rather than grind the last 36% against 20 days of gamma
   STOP LOSS  BBB 97/92 [pos-BBB]  realized $-131.12
       buying it back costs $231, 2.3x the $100 credit taken in (stop is 2x)
@@ -166,7 +166,7 @@ exactly the positions with the thinnest collateral:
 |---|---|---|
 | Buyback costs a multiple of the credit | `2.0×` | `stop_loss_credit_multiple` |
 | Down a fraction of the defined max loss | `50%` | `stop_loss_pct_of_max_loss` |
-| Profit booked at | `55%` of max credit | fixed by the strategy |
+| Profit booked at | `50%` of max credit (50–75% band) | fixed by the strategy |
 
 `--no-auto-exit` decides without executing; `auto_exit: false` in
 `data/settings.json` makes that the default.
@@ -220,7 +220,7 @@ number beside it:
 | `min_credit_per_trade` | strategy's $100 | Credit floor |
 | `max_credit_per_trade` | no cap | A ceiling, if you want one |
 | `min_otm_cushion` | strategy's 3% | How far OTM the short strike must sit |
-| `take_profit_pct` | strategy's 55% | Where profit is booked |
+| `take_profit_pct` | strategy's 50% | Where profit is booked |
 | `stop_loss_credit_multiple` | `2.0×` | |
 | `stop_loss_pct_of_max_loss` | `50%` | |
 

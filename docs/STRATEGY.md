@@ -45,7 +45,10 @@ This agent trades exactly one structure: the **bull put credit spread**.
 - **Bear put debit spread**: for a name breaking down further rather than bouncing (e.g., the ACN $190/$160 example) — this is a directional bet, sized by debit paid (not collateral), and is explicitly NOT part of the standing put-credit-spread mandate. Only run this on direct request, and always label it as the opposite thesis.
 
 ### 1.7 Exit / management rules
-- Take profit at 50-65% of max credit received; don't hold for the last few dollars of theta.
+- Take profit at 50-75% of max credit received; don't hold for the last few dollars of theta.
+  Book at the **lower** edge: the rule fires on the first mark at or above 50%, so 75% is the
+  line a position should never still be sitting past, not a second target. (Band widened from
+  50-65% on 2026-09-01 at the operator's instruction; the trigger moved 55% -> 50% with it.)
 - If the short strike is tested with time remaining: roll down-and-out for a further credit, or accept the defined max loss. Never remove the long put leg to "save on cost" once in the trade — that re-introduces undefined risk.
 - Recompute the whole screen on a fixed cadence (weekly is reasonable) rather than trading ad hoc.
 

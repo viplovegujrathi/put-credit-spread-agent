@@ -156,8 +156,17 @@ class Strategy:
                                                # strikes that actually exist
 
     # --- 1.7 management ---------------------------------------------------
-    take_profit_pct: float = 0.55        # close at 55% of max credit (50-65% band)
-    take_profit_band: tuple[float, float] = (0.50, 0.65)
+    # Book at the LOWER edge of the band: the rule fires on the first mark at or
+    # above `take_profit_pct`, so the upper bound is the line the account should
+    # never still be holding past, not a second target. If a position is sitting
+    # above it, an exit was due and was not taken -- the market was shut or the
+    # mark was stale -- and that is an alert, not a trade decision
+    # (see pcs/health.py).
+    #
+    # Earlier is the risk-reducing direction: less time in the trade, less
+    # gamma, more realised wins, at a lower average capture per trade.
+    take_profit_pct: float = 0.50        # close at 50% of max credit (50-75% band)
+    take_profit_band: tuple[float, float] = (0.50, 0.75)
     manage_dte: int = 21                 # start watching for a roll here
     defend_dte: int = 7                  # short strike tested this close -> act
 
@@ -393,6 +402,12 @@ def _validate() -> None:
     assert s.min_credit_per_trade >= 100.0, "per-trade credit floor is $100"
     assert s.max_credit_per_trade is None, "credit has no upper cap, by design"
     assert s.primary_band[0] < s.primary_band[1] <= 0.0
+    # The trigger has to sit inside the band it is described by. The band is
+    # rendered on the dashboard and on every ticket as the rule in force, so a
+    # trigger outside it makes the page state something the engine does not do.
+    lo, hi = s.take_profit_band
+    assert lo <= s.take_profit_pct <= hi, "take profit must fire inside its band"
+    assert 0.0 < lo < hi <= 1.0, "take profit band must be an ordered fraction"
     assert s.broken_below <= s.stretched_band[0]
 
 

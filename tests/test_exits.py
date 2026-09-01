@@ -41,31 +41,42 @@ def led(settings, tmp_path):
 
 # -- profit booking --------------------------------------------------------
 def test_books_profit_at_the_strategy_target(settings):
-    """55% of max credit is the strategy's number; the agent takes it."""
-    pos = a_position(credit=1.00, debit=0.45)          # 55% of the credit captured
+    """The trigger is the LOWER edge of the band, so the first mark at or above
+    it books. Derived from STRATEGY so moving the target moves the test."""
+    debit = round(1.00 - STRATEGY.take_profit_pct, 2)   # exactly on the target
+    pos = a_position(credit=1.00, debit=debit)
     d = decide(pos, settings)
     assert d.action == TAKE_PROFIT and d.act
-    assert "55%" in d.reason
+    assert f"{STRATEGY.take_profit_pct:.0%}" in d.reason
 
 
 def test_does_not_book_a_cent_early(settings):
-    pos = a_position(credit=1.00, debit=0.46)          # 54%
+    debit = round(1.01 - STRATEGY.take_profit_pct, 2)  # one cent short of it
+    pos = a_position(credit=1.00, debit=debit)
     d = decide(pos, settings)
     assert not d.act and d.action == HOLD
+
+
+def test_the_trigger_is_the_bottom_of_the_band_not_the_middle(settings):
+    """Booking at the lower edge is the point: everything above it is time the
+    account did not need to spend carrying gamma."""
+    lo, hi = STRATEGY.take_profit_band
+    assert STRATEGY.take_profit_pct == lo < hi
 
 
 def test_the_profit_target_defaults_to_the_skill_and_reports_any_override(settings):
     """The target is overridable, but never silently: an untouched account uses
     the skill number, and a changed one shows up in deviations()."""
-    assert STRATEGY.take_profit_pct == 0.55
+    assert STRATEGY.take_profit_pct == 0.50
+    assert STRATEGY.take_profit_band == (0.50, 0.75)
     assert settings.take_profit_pct is None          # untouched
-    assert settings.strategy().take_profit_pct == 0.55
+    assert settings.strategy().take_profit_pct == 0.50
     assert settings.deviations() == []
 
-    settings.take_profit_pct = 0.40
-    assert settings.strategy().take_profit_pct == 0.40
+    settings.take_profit_pct = 0.30
+    assert settings.strategy().take_profit_pct == 0.30
     assert any("take profit" in d for d in settings.deviations())
-    pos = a_position(credit=1.00, debit=0.58)        # 42% captured
+    pos = a_position(credit=1.00, debit=0.68)        # 32% captured
     assert decide(pos, settings).action == TAKE_PROFIT
 
 

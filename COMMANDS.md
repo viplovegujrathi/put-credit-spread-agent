@@ -286,7 +286,7 @@ Sets and persists to `data/settings.json`. Repeatable.
 | `min_credit_per_trade` | strategy's $100 | Credit floor |
 | `max_credit_per_trade` | no cap | A ceiling, if you want one |
 | `min_otm_cushion` | strategy's 3% | How far OTM the short strike must sit |
-| `take_profit_pct` | strategy's 55% | Where profit is booked |
+| `take_profit_pct` | strategy's 50% | Where profit is booked. The 50–75% band it sits in is not settable per account |
 | `stop_loss_credit_multiple` | `2.0` | Stop when buyback costs this × the credit |
 | `stop_loss_pct_of_max_loss` | `0.50` | ... or when down this fraction of max loss |
 | `max_total_collateral` | `2400` | Across the whole book |

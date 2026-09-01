@@ -90,13 +90,23 @@ def test_expiration_settlement(spot, expected):
     assert settle_expired(pos, spot)[0] == expected
 
 
-def test_take_profit_advice_fires_inside_the_band():
-    pos = Position(id="x", symbol="T", sector="S", expiration="2099-01-01",
-                   short_strike=97.0, long_strike=92.0, width=5.0, contracts=1,
-                   credit_open=1.20, credit_dollars=120, collateral=380,
-                   opened_at="", opened_spot=100.0, mark_spot=101.0,
-                   mark_cost_to_close=0.36)                 # 70% of max credit
-    assert "TAKE PROFIT" in management_note(pos)
+def _held(pct_captured: float) -> Position:
+    return Position(id="x", symbol="T", sector="S", expiration="2099-01-01",
+                    short_strike=97.0, long_strike=92.0, width=5.0, contracts=1,
+                    credit_open=1.20, credit_dollars=120, collateral=380,
+                    opened_at="", opened_spot=100.0, mark_spot=101.0,
+                    mark_cost_to_close=round(1.20 * (1 - pct_captured), 2))
+
+
+def test_take_profit_advice_shouts_above_the_top_of_the_band():
+    """Past the upper edge the position should already have been closed, so the
+    note stops being on-plan and starts being a flag."""
+    assert "TAKE PROFIT" in management_note(_held(0.80))
+
+
+def test_inside_the_band_the_advice_says_it_is_on_plan():
+    note = management_note(_held(0.60))
+    assert "TAKE PROFIT" not in note and "on-plan" in note
 
 
 def test_tested_strike_advice_never_suggests_removing_the_hedge():
