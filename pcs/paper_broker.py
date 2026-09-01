@@ -112,7 +112,7 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
         opened_spot=spread.spot, mark_cost_to_close=fill, mark_spot=spread.spot,
         marked_at=dt.datetime.now().isoformat(timespec="seconds"),
         fees_paid=fees, proposal_id=proposal_id, approved_by=approved_by,
-        basis=spread.basis, source=spread.source,
+        basis=spread.basis, source=spread.source, quote_quality=spread.quote_quality,
     )
     return ledger.open_position(pos)
 

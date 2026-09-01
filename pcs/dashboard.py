@@ -15,52 +15,137 @@ from .config import DASHBOARD_HTML, STRATEGY, Settings
 from .exits import decide
 from .ledger import Ledger, Position
 from .proposer import Proposal
+from .readiness import assess
 from .session import SessionState
 
 CSS = """
-:root{--bg:#0f1216;--panel:#171b21;--line:#252b33;--ink:#e6e9ee;--dim:#8b95a3;
---pos:#3fb950;--neg:#f85149;--warn:#d29922;--accent:#58a6ff}
+:root{--bg:#0b0e13;--panel:#141922;--panel2:#1a202b;--line:#242c38;--ink:#e9edf3;
+--dim:#8792a4;--pos:#3fb950;--neg:#f85149;--warn:#d29922;--accent:#58a6ff}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-font:14px/1.5 ui-sans-serif,-apple-system,"SF Pro Text",Segoe UI,sans-serif}
-.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px}
-h1{font-size:20px;margin:0 0 4px} h2{font-size:14px;letter-spacing:.08em;
-text-transform:uppercase;color:var(--dim);margin:32px 0 12px;font-weight:600}
+body{margin:0;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;
+font:14px/1.55 ui-sans-serif,-apple-system,"SF Pro Text",Segoe UI,Inter,sans-serif;
+background-image:radial-gradient(900px 380px at 15% -8%,rgba(88,166,255,.09),transparent),
+radial-gradient(700px 320px at 92% -4%,rgba(63,185,80,.06),transparent)}
+.wrap{max-width:1180px;margin:0 auto;padding:30px 20px 70px}
+h1{font-size:21px;margin:0 0 5px;letter-spacing:-.015em}
+h2{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);
+margin:30px 0 12px;font-weight:600}
 .sub{color:var(--dim);font-size:13px;margin-bottom:18px}
-.banner{background:#1d2027;border-left:3px solid var(--warn);padding:10px 14px;
-border-radius:0 6px 6px 0;margin:14px 0;color:#d7dce3;font-size:13px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
-.card .k{color:var(--dim);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
-.card .v{font-size:21px;margin-top:5px;font-variant-numeric:tabular-nums}
+.banner{background:linear-gradient(90deg,rgba(210,153,34,.13),rgba(210,153,34,.03));
+border-left:3px solid var(--warn);padding:11px 15px;border-radius:0 8px 8px 0;
+margin:16px 0;color:#dfe4ec;font-size:13px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(152px,1fr));gap:11px}
+.card{background:linear-gradient(180deg,var(--panel2),var(--panel));
+border:1px solid var(--line);border-radius:11px;padding:15px 16px;
+transition:border-color .15s,transform .15s}
+.card:hover{border-color:#313d4e;transform:translateY(-1px)}
+.card .k{color:var(--dim);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+font-weight:600}
+.card .v{font-size:22px;margin-top:6px;font-variant-numeric:tabular-nums;
+letter-spacing:-.02em}
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{width:100%;min-width:760px;border-collapse:collapse;background:var(--panel);
-border:1px solid var(--line);border-radius:8px}
-th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
-color:var(--dim);padding:10px 12px;border-bottom:1px solid var(--line);font-weight:600}
-td{padding:10px 12px;border-bottom:1px solid #1e232a;font-variant-numeric:tabular-nums}
-tr:last-child td{border-bottom:none}
+table{width:100%;min-width:760px;border-collapse:separate;border-spacing:0;
+background:var(--panel);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+th{text-align:left;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+color:var(--dim);padding:11px 13px;background:#11161e;
+border-bottom:1px solid var(--line);font-weight:600;white-space:nowrap}
+td{padding:11px 13px;border-bottom:1px solid #1b212b;font-variant-numeric:tabular-nums;
+vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+tbody tr{transition:background .12s} tbody tr:hover{background:#171d27}
 .pos{color:var(--pos)} .neg{color:var(--neg)} .dim{color:var(--dim)}
-.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;
-background:#22272e;color:var(--dim);border:1px solid var(--line)}
-.tag.ok{color:var(--pos);border-color:#20402a} .tag.blocked{color:var(--neg);border-color:#4a2224}
-.tag.act{color:var(--warn);border-color:#463a17}
-.note{font-size:12px;color:var(--warn);padding:2px 0}
-.dte{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;
-font-weight:600;background:#22272e;border:1px solid var(--line);color:var(--dim)}
-.dte.soon{color:var(--warn);border-color:#463a17;background:#2a2415}
-.dte.now{color:var(--neg);border-color:#4a2224;background:#2c1a1c}
+.tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;
+background:#212936;color:var(--dim);border:1px solid var(--line);white-space:nowrap}
+.tag.ok{color:var(--pos);border-color:#20402a;background:rgba(63,185,80,.09)}
+.tag.blocked{color:var(--neg);border-color:#4a2224;background:rgba(248,81,73,.09)}
+.tag.act{color:var(--warn);border-color:#463a17;background:rgba(210,153,34,.1)}
+.note{font-size:12px;color:var(--warn);padding:3px 0;line-height:1.45}
+.dte{display:inline-block;padding:1.5px 8px;border-radius:999px;font-size:11px;
+font-weight:600;background:#212936;border:1px solid var(--line);color:var(--dim);
+white-space:nowrap}
+.dte.soon{color:var(--warn);border-color:#463a17;background:rgba(210,153,34,.11)}
+.dte.now{color:var(--neg);border-color:#4a2224;background:rgba(248,81,73,.11)}
 .exp{font-variant-numeric:tabular-nums;white-space:nowrap}
-.rules{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
-.rules li{margin:4px 0;color:#c3cad3;font-size:13px}
-.empty{color:var(--dim);padding:16px;background:var(--panel);
-border:1px solid var(--line);border-radius:8px;font-size:13px}
-code{background:#22272e;padding:1px 6px;border-radius:4px;font-size:12px}
-"""
+.rules{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+padding:16px 20px}
+.rules li{margin:5px 0;color:#c6cedb;font-size:13px}
+.empty{color:var(--dim);padding:18px;background:var(--panel);
+border:1px solid var(--line);border-radius:11px;font-size:13px}
+code{background:#212936;padding:1.5px 6px;border-radius:4px;font-size:12px;
+font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.tabs{display:flex;gap:2px;margin:24px 0 16px;border-bottom:1px solid var(--line);
+flex-wrap:wrap}
+.tabs button{appearance:none;background:none;border:none;border-bottom:2px solid transparent;
+color:var(--dim);font:inherit;font-weight:600;font-size:13px;padding:10px 15px;
+cursor:pointer;margin-bottom:-1px;transition:color .12s}
+.tabs button:hover{color:var(--ink)}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.tabs .pill{display:inline-block;margin-left:7px;padding:1px 7px;border-radius:999px;
+background:#212936;font-size:10.5px;color:var(--dim);font-weight:600}
+.panel[hidden]{display:none}
+.meter{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:18px 20px}
+.meter .top{display:flex;justify-content:space-between;align-items:baseline;gap:14px;
+flex-wrap:wrap;margin-bottom:12px}
+.meter .score{font-size:26px;font-weight:600;letter-spacing:-.02em;
+font-variant-numeric:tabular-nums}
+.bar{height:9px;border-radius:999px;background:#212936;overflow:hidden;
+border:1px solid var(--line)}
+.bar span{display:block;height:100%;border-radius:999px;transition:width .4s ease}
+.bar span.low{background:linear-gradient(90deg,#a8352f,#f85149)}
+.bar span.mid{background:linear-gradient(90deg,#9a7016,#d29922)}
+.bar span.high{background:linear-gradient(90deg,#2b8f3d,#3fb950)}
+.checks{margin-top:16px;display:grid;gap:1px;background:var(--line);
+border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.chk{display:grid;grid-template-columns:22px 1fr;gap:11px;padding:11px 14px;
+background:var(--panel);align-items:start;font-size:13px}
+.chk .m{font-weight:700;line-height:1.3}
+.chk .m.y{color:var(--pos)} .chk .m.n{color:var(--neg)} .chk .m.w{color:var(--warn)}
+.chk .d{color:var(--dim);font-size:12px;margin-top:2px;line-height:1.45}
+.evt{display:grid;grid-template-columns:148px 118px 1fr;gap:12px;padding:9px 0;
+border-bottom:1px solid #1b212b;font-size:13px;align-items:baseline}
+.evt:last-child{border-bottom:none}
+.evt time{color:var(--dim);font-variant-numeric:tabular-nums;font-size:12px}
+.evt .what{font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase}
+.evt .what.open{color:var(--accent)} .evt .what.close{color:var(--warn)}
+.evt .what.exit{color:var(--pos)} .evt .what.dim{color:var(--dim)}
+.c{display:block}
 
+@media (max-width:700px){
+.wrap{padding:18px 13px 52px}
+h1{font-size:17px} h2{margin:24px 0 10px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:8px}
+.card{padding:12px 13px;border-radius:10px} .card .v{font-size:19px}
+.tabs{gap:0;margin:18px 0 14px} .tabs button{padding:10px 12px;font-size:12.5px;flex:1}
+.scroll{overflow-x:visible}
+table{min-width:0;border:none;background:none;overflow:visible}
+thead{display:none}
+tbody tr{display:block;background:linear-gradient(180deg,var(--panel2),var(--panel));
+border:1px solid var(--line);border-radius:11px;padding:5px 14px;margin-bottom:10px}
+tbody tr:hover{background:var(--panel)}
+tbody td{display:flex;justify-content:space-between;align-items:baseline;gap:16px;
+padding:8px 0;text-align:right;border-bottom:1px solid #1b212b}
+tbody tr td:last-child{border-bottom:none}
+tbody td::before{content:attr(data-l);color:var(--dim);font-size:10.5px;letter-spacing:.06em;
+text-transform:uppercase;text-align:left;flex:0 0 auto;padding-top:3px;font-weight:600}
+tbody td .c{text-align:right;min-width:0;overflow-wrap:anywhere}
+.note{text-align:right}
+.evt{grid-template-columns:1fr;gap:3px;padding:11px 0}
+.meter{padding:15px 16px} .meter .score{font-size:22px}
+.chk{grid-template-columns:20px 1fr;padding:10px 12px}
+.rules{padding:14px 17px} .rules ul{padding-left:19px}
+}
+"""
 
 def _e(x) -> str:
     return html.escape(str(x))
+
+
+def _sign(v: float, fmt: str = ",.0f", money: bool = True) -> str:
+    cls = "pos" if v > 0 else ("neg" if v < 0 else "dim")
+    txt = f"{'$' if money else ''}{v:{fmt}}"
+    if v > 0:
+        txt = "+" + txt
+    return f'<span class="{cls}">{txt}</span>'
 
 
 def _dte_badge(dte: int, strategy=STRATEGY) -> str:
@@ -68,7 +153,8 @@ def _dte_badge(dte: int, strategy=STRATEGY) -> str:
 
     This strategy is entirely DTE-driven -- management starts at 21 days and a
     tested short strike is defended at 7 -- so the clock deserves the same
-    visual weight as the money.
+    visual weight as the money. The thresholds come from STRATEGY so the badge
+    cannot drift away from what the exit engine actually fires on.
     """
     if dte <= strategy.defend_dte:
         cls, hint = "dte now", "defend"
@@ -76,16 +162,15 @@ def _dte_badge(dte: int, strategy=STRATEGY) -> str:
         cls, hint = "dte soon", "manage"
     else:
         cls, hint = "dte", ""
-    label = f"{dte}d" + (f" · {hint}" if hint else "")
+    label = f"{dte}d" + (f" \u00b7 {hint}" if hint else "")
     return f'<span class="{cls}">{_e(label)}</span>'
 
 
 def _next_expiry(rows: list[Position]) -> str:
     """The nearest expiration across the open book, with its DTE badge.
 
-    Every exit rule in this strategy is a function of days remaining, so the
-    soonest expiry is the single most useful number that is not a dollar
-    amount. With nothing open there is no clock to show.
+    Every exit rule here is a function of days remaining, so the soonest expiry
+    is the most useful number on the page that is not a dollar amount.
     """
     if not rows:
         return '<span class="dim">-</span>'
@@ -97,87 +182,187 @@ def _next_expiry(rows: list[Position]) -> str:
 
 
 def _expiry_cell(expiration: str, dte: int) -> str:
-    return (f"<td class='exp'><b>{_e(expiration)}</b><div style='margin-top:3px'>"
-            f"{_dte_badge(dte)}</div></td>")
+    return (f"<span class='exp'><b>{_e(expiration)}</b></span>"
+            f"<div style='margin-top:3px'>{_dte_badge(dte)}</div>")
 
 
-def _sign(v: float, fmt: str = ",.0f", money: bool = True) -> str:
-    cls = "pos" if v > 0 else ("neg" if v < 0 else "dim")
-    txt = f"{'$' if money else ''}{v:{fmt}}"
-    if v > 0:
-        txt = "+" + txt
-    return f'<span class="{cls}">{txt}</span>'
+def _table(headers: list[str], rows: list[list[str]]) -> str:
+    """One table builder for all three tables.
+
+    Every cell carries its own column label as `data-l`. On a phone the table
+    collapses to a stack of cards and that attribute becomes the row label, so
+    headers and labels cannot drift apart -- they are the same list.
+    """
+    head = "".join(f"<th>{_e(h)}</th>" for h in headers)
+    body = "".join(
+        "<tr>" + "".join(f'<td data-l="{_e(h)}"><span class="c">{c}</span></td>'
+                         for h, c in zip(headers, r, strict=True)) + "</tr>"
+        for r in rows)
+    return (f'<div class="scroll"><table><thead><tr>{head}</tr></thead>'
+            f"<tbody>{body}</tbody></table></div>")
 
 
 def _positions_table(rows: list[Position], settings: Settings) -> str:
     if not rows:
         return '<div class="empty">No open positions.</div>'
-    body = []
+    out = []
     for p in rows:
         d = decide(p, settings)
         note = d.reason
         tag = (f'<span class="tag act">{_e(d.headline)}</span>'
                if d.act else (f'<span class="tag">{_e(d.headline)}</span>' if note else ""))
-        body.append(
-            f"<tr><td><code>{_e(p.id)}</code></td><td><b>{_e(p.symbol)}</b>"
-            f"<div class='dim' style='font-size:11px'>{_e(p.sector)}</div></td>"
-            f"<td>{p.short_strike:g}/{p.long_strike:g}p</td>"
-            + _expiry_cell(p.expiration, p.dte)
-            + f"<td>{p.contracts}</td><td>${p.credit_dollars:,.0f}</td>"
-            + f"<td>${p.collateral:,.0f}</td>"
-            + f"<td>${p.mark_cost_to_close * 100 * p.contracts:,.0f}</td>"
-            + f"<td>{_sign(p.open_pl)}</td><td>{p.pct_of_max_credit:.0%} {tag}"
-            + (f"<div class='note'>{_e(note)}</div>" if note else "")
-            + "</td></tr>")
-    return (
-        '<div class="scroll"><table><tr><th>id</th><th>ticker</th><th>spread</th>'
-        "<th>expiration</th><th>qty</th><th>credit</th><th>collateral</th>"
-        "<th>cost to close</th><th>P&amp;L</th><th>% of max credit</th></tr>"
-        + "".join(body) + "</table></div>")
+        out.append([
+            f"<b>{_e(p.symbol)}</b>"
+            f"<div class='dim' style='font-size:11px'>{_e(p.sector)}</div>",
+            f"{p.short_strike:g}/{p.long_strike:g}p",
+            _expiry_cell(p.expiration, p.dte),
+            f"{p.contracts}",
+            f"${p.credit_dollars:,.0f}",
+            f"${p.collateral:,.0f}",
+            f"${p.mark_cost_to_close * 100 * p.contracts:,.0f}",
+            _sign(p.open_pl),
+            f"{p.pct_of_max_credit:.0%} {tag}"
+            + (f"<div class='note'>{_e(note)}</div>" if note else ""),
+        ])
+    return _table(["ticker", "spread", "expiration", "qty", "credit",
+                   "collateral", "cost to close", "P&L", "% of max credit"], out)
 
 
 def _closed_table(rows: list[Position]) -> str:
     if not rows:
         return '<div class="empty">No closed positions yet.</div>'
-    body = "".join(
-        f"<tr><td><code>{_e(p.id)}</code></td><td><b>{_e(p.symbol)}</b></td>"
-        f"<td>{p.short_strike:g}/{p.long_strike:g}p</td>"
-        f"<td class='exp'><b>{_e(p.expiration)}</b></td>"
-        f"<td>${p.credit_dollars:,.0f}</td><td>${p.close_debit * 100 * p.contracts:,.0f}</td>"
-        f"<td>{_sign(p.realized_pl)}</td><td class='dim'>{_e(p.close_reason)}</td></tr>"
-        for p in sorted(rows, key=lambda x: x.closed_at, reverse=True))
-    return ('<div class="scroll"><table><tr><th>id</th><th>ticker</th><th>spread</th>'
-            "<th>expiration</th><th>credit</th><th>debit</th><th>realized</th>"
-            "<th>outcome</th></tr>" + body + "</table></div>")
+    out = [[
+        f"<code>{_e(p.id)}</code>",
+        f"<b>{_e(p.symbol)}</b>",
+        f"{p.short_strike:g}/{p.long_strike:g}p",
+        f"<span class='exp'><b>{_e(p.expiration)}</b></span>",
+        f"${p.credit_dollars:,.0f}",
+        f"${p.close_debit * 100 * p.contracts:,.0f}",
+        _sign(p.realized_pl),
+        f"<span class='dim'>{_e(p.close_reason)}</span>",
+    ] for p in sorted(rows, key=lambda x: x.closed_at, reverse=True)]
+    return _table(["id", "ticker", "spread", "expiration", "credit", "debit",
+                   "realized", "outcome"], out)
 
 
 def _proposals_table(props: list[Proposal]) -> str:
     pending = [p for p in props if p.status == "pending"]
     if not pending:
         return '<div class="empty">No pending proposals. Run <code>./run.py propose</code>.</div>'
-    body = []
+    out = []
     for p in pending:
         s = p.spread
         tag = ('<span class="tag ok">clear</span>' if p.risk_ok
                else '<span class="tag blocked">blocked</span>')
         notes = "".join(f"<div class='note'>{_e(w)}</div>"
                         for w in (p.risk_warnings if p.risk_ok else p.risk_reasons))
-        body.append(
-            f"<tr><td><code>{_e(p.id)}</code></td><td><b>{_e(p.symbol)}</b>"
-            f"<div class='dim' style='font-size:11px'>{_e(p.sector)}</div></td>"
-            f"<td>{s['short_strike']:g}/{s['long_strike']:g}p<div class='dim' "
-            f"style='font-size:11px'>${s['width']:g} wide</div></td>"
-            + _expiry_cell(s["expiration"], s["dte"])
-            + f"<td>${s['credit_dollars']:.0f}"
-            f"<div class='dim' style='font-size:11px'>nat ${s['credit_nat_dollars']:.0f}</div></td>"
-            f"<td>${s['collateral']:.0f}</td><td>{s['roc']:.0%}</td>"
-            f"<td>{s['cushion']:.1%}</td>"
-            f"<td>{'-' if s['pop_est'] is None else format(s['pop_est'], '.0%')}</td>"
-            f"<td>{tag}{notes}</td></tr>")
-    return ('<div class="scroll"><table><tr><th>proposal</th><th>ticker</th>'
-            "<th>spread</th><th>expiration</th><th>credit</th><th>collateral</th>"
-            "<th>ROC</th><th>cushion</th><th>POP</th><th>status</th></tr>"
-            + "".join(body) + "</table></div>")
+        out.append([
+            f"<code>{_e(p.id)}</code>",
+            f"<b>{_e(p.symbol)}</b>"
+            f"<div class='dim' style='font-size:11px'>{_e(p.sector)}</div>",
+            f"{s['short_strike']:g}/{s['long_strike']:g}p"
+            f"<div class='dim' style='font-size:11px'>${s['width']:g} wide</div>",
+            _expiry_cell(s["expiration"], s["dte"]),
+            f"${s['credit_dollars']:.0f}"
+            f"<div class='dim' style='font-size:11px'>nat ${s['credit_nat_dollars']:.0f}</div>",
+            f"${s['collateral']:.0f}",
+            f"{s['roc']:.0%}",
+            f"{s['cushion']:.1%}",
+            "-" if s["pop_est"] is None else format(s["pop_est"], ".0%"),
+            f"{tag}{notes}",
+        ])
+    return _table(["proposal", "ticker", "spread", "expiration", "credit",
+                   "collateral", "ROC", "cushion", "POP", "status"], out)
+
+
+_EVENT_LABEL = {
+    "account_opened": ("account opened", "dim"),
+    "position_opened": ("opened", "open"),
+    "position_closed": ("closed", "close"),
+    "auto_exit": ("agent exit", "exit"),
+    "marked": ("marked", "dim"),
+}
+
+
+def _event_line(e: dict) -> str:
+    """One row of the append-only log, rendered without interpreting it.
+
+    The log is the audit trail, so this deliberately shows whatever fields the
+    event carries rather than a curated subset -- an event type added later
+    still renders.
+    """
+    kind = e.get("kind", "?")
+    label, cls = _EVENT_LABEL.get(kind, (kind.replace("_", " "), "dim"))
+    skip = {"at", "kind"}
+    detail = " &middot; ".join(
+        f"{_e(k.replace('_', ' '))} <b>{_e(v)}</b>"
+        for k, v in e.items() if k not in skip and v not in ("", None))
+    when = str(e.get("at", "")).replace("T", " ")
+    detail = detail or '<span class="dim">-</span>'
+    return (f'<div class="evt"><time>{_e(when)}</time>'
+            f'<span class="what {cls}">{_e(label)}</span>'
+            f"<span>{detail}</span></div>")
+
+
+def _history_panel(led: Ledger) -> str:
+    """Closed positions plus the raw event log, newest first."""
+    events = list(reversed(led.events))
+    log = ("".join(_event_line(e) for e in events) if events
+           else '<div class="empty">No events yet.</div>')
+    closed = led.closed_positions
+    wins = [p for p in closed if p.realized_pl > 0]
+    summary = ""
+    if closed:
+        gross_win = sum(p.realized_pl for p in wins)
+        gross_loss = sum(p.realized_pl for p in closed if p.realized_pl <= 0)
+        avg = led.realized_pl / len(closed)
+        summary = (
+            f'<div class="cards" style="margin-bottom:8px">'
+            f'<div class="card"><div class="k">closed trades</div>'
+            f'<div class="v">{len(closed)}</div></div>'
+            f'<div class="card"><div class="k">win rate</div>'
+            f'<div class="v">{len(wins) / len(closed):.0%}</div></div>'
+            f'<div class="card"><div class="k">realized P&amp;L</div>'
+            f'<div class="v">{_sign(led.realized_pl, ",.2f")}</div></div>'
+            f'<div class="card"><div class="k">average per trade</div>'
+            f'<div class="v">{_sign(avg, ",.2f")}</div></div>'
+            f'<div class="card"><div class="k">won / lost</div>'
+            f'<div class="v">{_sign(gross_win, ",.0f")} / {_sign(gross_loss, ",.0f")}</div></div>'
+            f"</div>")
+    return (f"{summary}<h2>Closed positions</h2>{_closed_table(closed)}"
+            f"<h2>Event log &mdash; every action, newest first</h2>"
+            f'<div class="rules">{log}</div>')
+
+
+def _ready_pill(led: Ledger, settings: Settings) -> str:
+    r = assess(led, settings)
+    return f"{r.pct:.0%}"
+
+
+def _readiness_panel(led: Ledger, settings: Settings) -> str:
+    """The go-live score, rendered honestly -- a low bar is the useful output."""
+    r = assess(led, settings)
+    pct = r.pct
+    cls = "high" if pct >= 0.85 else ("mid" if pct >= 0.5 else "low")
+    rows = "".join(
+        f'<div class="chk"><div class="m {"y" if c.ok else ("n" if c.blocking else "w")}">'
+        f'{"&#10003;" if c.ok else ("&#10007;" if c.blocking else "!")}</div>'
+        f"<div><div>{_e(c.label)}"
+        + ("" if c.blocking else ' <span class="tag">advisory</span>')
+        + f'</div><div class="d">{_e(c.detail)}</div></div></div>'
+        for c in r.criteria)
+    return (
+        f'<div class="meter"><div class="top">'
+        f'<div><div class="score">{r.met} of {r.total} checks pass</div>'
+        f'<div class="dim" style="font-size:13px;margin-top:3px">{_e(r.verdict)}</div></div>'
+        f'<div class="score" style="color:var(--{"pos" if cls == "high" else "warn" if cls == "mid" else "neg"})">'
+        f"{pct:.0%}</div></div>"
+        f'<div class="bar"><span class="{cls}" style="width:{max(pct * 100, 2):.0f}%"></span></div>'
+        f'<div class="checks">{rows}</div>'
+        f'<div class="dim" style="font-size:12px;margin-top:14px;line-height:1.5">'
+        f"This is a readiness signal, not a permission. Even at 100% the agent has no "
+        f"path to placing a live order &mdash; it refuses a non-paper ledger in code, and "
+        f"a human places every real trade.</div></div>")
 
 
 def render(led: Ledger, props: list[Proposal], settings: Settings,
@@ -208,6 +393,16 @@ def render(led: Ledger, props: list[Proposal], settings: Settings,
 opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H:%M}</div>
 <div class="banner">{_e(sess.banner)}</div>
 
+<div class="tabs" role="tablist">
+<button role="tab" aria-selected="true" data-t="now">Positions</button>
+<button role="tab" aria-selected="false" data-t="history">History<span class="pill"
+>{len(led.closed_positions)}</span></button>
+<button role="tab" aria-selected="false" data-t="ready">Go-live<span class="pill"
+>{_ready_pill(led, settings)}</span></button>
+<button role="tab" aria-selected="false" data-t="rules">Rules</button>
+</div>
+
+<section class="panel" id="p-now">
 <div class="cards">{card_html}</div>
 
 <h2>Portfolio limits</h2>
@@ -229,10 +424,18 @@ ${STRATEGY.min_credit_per_trade:,.0f}, no upper cap on credit</li>
 
 <h2>Pending proposals &mdash; awaiting human approval</h2>
 {_proposals_table(props)}
+</section>
 
-<h2>Closed positions</h2>
-{_closed_table(led.closed_positions)}
+<section class="panel" id="p-history" hidden>
+{_history_panel(led)}
+</section>
 
+<section class="panel" id="p-ready" hidden>
+<h2>Readiness to trade this live</h2>
+{_readiness_panel(led, settings)}
+</section>
+
+<section class="panel" id="p-rules" hidden>
 <h2>Rules this agent runs under</h2>
 <div class="rules"><ul>
 <li><b>Screen:</b> &ge;{STRATEGY.min_pct_off_52w_high:.0%} off the 52-week high
@@ -252,9 +455,31 @@ The opening book is the widest and thinnest of the day.</li>
 <li><b>Exit:</b> take profit at {STRATEGY.take_profit_band[0]:.0%}&ndash;
 {STRATEGY.take_profit_band[1]:.0%} of max credit. If the short strike is tested,
 roll down-and-out or accept the defined loss &mdash; never remove the long leg.</li>
-<li><b>Approval:</b> every trade needs explicit per-trade human sign-off. This agent
-proposes; it never places.</li>
+<li><b>Approval:</b> every position that adds risk needs explicit per-trade human
+sign-off. This agent proposes; it never places an opening order.</li>
+<li><b>Exits are the exception:</b> profit is booked and stops are cut by the agent
+itself, because a target only works taken mechanically and a stop must fire while
+nobody is watching. Closing only, paper only, never on a stale mark.</li>
 </ul></div>
+</section>
+
+<script>
+(function(){{
+  var tabs=[].slice.call(document.querySelectorAll('.tabs button'));
+  function show(name){{
+    tabs.forEach(function(b){{ b.setAttribute('aria-selected', b.dataset.t===name); }});
+    ['now','history','ready','rules'].forEach(function(n){{
+      var el=document.getElementById('p-'+n);
+      if(el) el.hidden = (n!==name);
+    }});
+    try{{ localStorage.setItem('pcs-tab', name); }}catch(e){{}}
+  }}
+  tabs.forEach(function(b){{ b.addEventListener('click', function(){{ show(b.dataset.t); }}); }});
+  var saved;
+  try{{ saved = localStorage.getItem('pcs-tab'); }}catch(e){{}}
+  if(saved && document.getElementById('p-'+saved)) show(saved);
+}})();
+</script>
 </div></body></html>"""
     path.write_text(doc)
     return path

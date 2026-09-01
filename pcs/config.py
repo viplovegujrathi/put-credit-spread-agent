@@ -136,6 +136,15 @@ class Settings:
     stop_loss_credit_multiple: float = 2.0    # close if buyback >= 2x the credit
     stop_loss_pct_of_max_loss: float = 0.50   # ... or if down half the max loss
 
+    # --- go-live readiness (pcs/readiness.py) ------------------------------
+    # What the broker says, recorded after being checked rather than assumed.
+    # Both go stale, so the timestamp is part of the fact.
+    broker_option_level: str = ""        # "option_level_3" is what a spread needs
+    broker_buying_power: float = 0.0
+    broker_checked_at: str = ""          # ISO date of the last broker check
+    min_closed_trades_for_live: int = 20
+    min_win_rate_for_live: float = 0.60
+
     # --- earnings ---------------------------------------------------------
     earnings_buffer_days: int = 2        # exclude if earnings <= expiry + buffer
 

@@ -65,8 +65,9 @@ class Position:
     fees_paid: float = 0.0
     proposal_id: str = ""
     approved_by: str = ""
-    basis: str = "live"
-    source: str = ""
+    basis: str = "live"          # "live" (real chain) | "modeled" (Black-Scholes)
+    source: str = ""             # which provider the chain came from
+    quote_quality: str = ""      # session grade at fill: live|closing_snapshot|stale
 
     @property
     def max_loss(self) -> float:
