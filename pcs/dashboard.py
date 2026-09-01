@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import sys
 
 from . import learning, watchlist
-from .config import DASHBOARD_HTML, STRATEGY, Settings
+from .config import DASHBOARD_HTML, STRATEGY, WEB_INDEX, Settings
 from .exits import decide
 from .ledger import Ledger, Position
 from .proposer import Proposal
@@ -23,12 +24,23 @@ from .session import SessionState
 # under it. Inline SVG rather than a file -- the dashboard is one self-contained
 # page that gets copied to a web root, and an asset it could arrive without is a
 # broken image on the only view of the account.
-LOGO_SVG = """<svg class="logo" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+# One mark, defined once. The header logo and the tab icon drew the same path
+# from two separate string literals, so an edit to one silently drifted from
+# the other. The line ends up and to the right, with a pullback in the middle:
+# a beaten-down name bouncing off support is the whole thesis, and an icon that
+# ended lower than it started said the opposite.
+_MARK_LINE = "M5.5 22 L12.5 15.5 L17 19 L25.5 8.5"
+_MARK_ARROW = "M20.4 8.5 H25.5 V13.6"
+_MARK_BASE = "M5.5 26 H26.5"
+
+LOGO_SVG = f"""<svg class="logo" viewBox="0 0 32 32" fill="none" aria-hidden="true">
 <rect width="32" height="32" rx="8.5" fill="url(#lg)"/>
 <rect width="32" height="32" rx="8.5" fill="url(#lv)"/>
-<path d="M5.5 8.5 L12 15 L16.5 11 L26.5 21" stroke="#fff" stroke-width="2.3"
+<path d="{_MARK_LINE}" stroke="#fff" stroke-width="2.3"
  stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M5.5 25.2 H26.5" stroke="#fff" stroke-opacity=".62" stroke-width="2.6"
+<path d="{_MARK_ARROW}" stroke="#fff" stroke-width="2.3"
+ stroke-linecap="round" stroke-linejoin="round"/>
+<path d="{_MARK_BASE}" stroke="#fff" stroke-opacity=".62" stroke-width="2.6"
  stroke-linecap="round"/>
 <defs>
 <linearGradient id="lg" x1="0" y1="0" x2="30" y2="32" gradientUnits="userSpaceOnUse">
@@ -44,9 +56,11 @@ def _favicon() -> str:
     import urllib.parse
     ico = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
            '<rect width="32" height="32" rx="8.5" fill="#2f7fe0"/>'
-           '<path d="M5.5 8.5 L12 15 L16.5 11 L26.5 21" stroke="#fff" stroke-width="2.6" '
-           'fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
-           '<path d="M5.5 25.2 H26.5" stroke="#fff" stroke-opacity=".65" '
+           f'<path d="{_MARK_LINE}" stroke="#fff" stroke-width="2.6" fill="none" '
+           'stroke-linecap="round" stroke-linejoin="round"/>'
+           f'<path d="{_MARK_ARROW}" stroke="#fff" stroke-width="2.6" fill="none" '
+           'stroke-linecap="round" stroke-linejoin="round"/>'
+           f'<path d="{_MARK_BASE}" stroke="#fff" stroke-opacity=".65" '
            'stroke-width="2.8" stroke-linecap="round"/></svg>')
     return "data:image/svg+xml," + urllib.parse.quote(ico)
 
@@ -727,6 +741,26 @@ def _deviations_panel(settings: Settings) -> str:
             f'Every proposal sized under these carries the same note.</div></div>')
 
 
+def _publish(doc: str) -> None:
+    """Copy the rendered page into the web root a server actually serves.
+
+    Written atomically: a reader mid-request must never get half a page. A
+    failure is reported rather than swallowed -- a dashboard that quietly stops
+    updating is worse than no dashboard, because it presents a stale book as
+    the current one, and that is the exact failure this function exists to fix.
+    """
+    if WEB_INDEX is None:
+        return
+    tmp = WEB_INDEX.with_name(WEB_INDEX.name + ".tmp")
+    try:
+        tmp.write_text(doc, encoding="utf-8")
+        tmp.replace(WEB_INDEX)
+    except OSError as exc:
+        print(f"warning: rendered {DASHBOARD_HTML} but could not publish to "
+              f"{WEB_INDEX} ({exc}) -- the served page is now STALE.",
+              file=sys.stderr)
+
+
 def render(led: Ledger, props: list[Proposal], settings: Settings,
            sess: SessionState, path=DASHBOARD_HTML):
     used_pct = (led.collateral_held / settings.max_total_collateral
@@ -904,4 +938,5 @@ nobody is watching. Closing only, paper only, never on a stale mark.</li>
 </script>
 </div></body></html>"""
     path.write_text(doc)
+    _publish(doc)
     return path

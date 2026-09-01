@@ -121,7 +121,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 200 tests, ruff clean.
+- 206 tests, ruff clean.
 
 ---
 
@@ -535,6 +535,14 @@ Two details that mattered:
 are unlearnable. `feature_gaps()` lists them on the dashboard, because "no
 signal from IV" and "IV was never written down" look identical on a page and
 mean opposite things.
+
+**The rendered page and the served page are not the same file.** `render()`
+writes `dashboard.html` beside the code; nginx serves `/var/www/pcs/index.html`.
+For a while only `bootstrap.sh` copied one to the other, so the served page
+froze at install time -- `propose` opened four positions and the dashboard kept
+showing an empty book, with the header timestamp moving only on redeploys.
+`render()` now publishes to `config.WEB_INDEX` atomically on every call and
+warns on stderr if it cannot. Any new writer of the page must publish too.
 
 ## 17. A dark dashboard is a preference, not a default
 

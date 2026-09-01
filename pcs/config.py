@@ -28,6 +28,17 @@ LEDGER_JSON = DATA_DIR / "ledger.json"
 PROPOSALS_JSON = DATA_DIR / "proposals.json"
 DASHBOARD_HTML = ROOT / "dashboard.html"
 
+# Where a web server serves the page from, if one does. `render()` writes
+# DASHBOARD_HTML next to the code and then publishes a copy here. Without that
+# second step the served page is only refreshed by a redeploy: propose, mark
+# and watch all rewrite dashboard.html while nginx keeps serving the copy made
+# at install time, so a live book renders as an empty one and the header
+# timestamp only moves when someone deploys.
+# Set PCS_WEB_ROOT to override; otherwise publish to the deploy's web root when
+# it exists, which is exactly the case where something is serving it.
+_web_root = os.environ.get("PCS_WEB_ROOT") or "/var/www/pcs"
+WEB_INDEX = (Path(_web_root) / "index.html") if Path(_web_root).is_dir() else None
+
 
 # --------------------------------------------------------------------------
 # Tier 1: strategy rules (fixed by the skill)
