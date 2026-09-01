@@ -12,6 +12,15 @@ ExecStart=/opt/pcs/deploy/pcs-refresh.sh mark
 TimeoutStartSec=600
 
 # This box never needs broker credentials -- it only reads public price data.
+# yfinance keeps a timezone/price cache and resolves its location through
+# platformdirs, which lands on $HOME/.cache -- i.e. /opt/pcs/.cache, which
+# ProtectSystem=strict makes read-only. Give it a real writable directory
+# instead of loosening the sandbox over the install tree. CacheDirectory= both
+# creates /var/cache/pcs owned by this service and adds it to the writable set.
+CacheDirectory=pcs
+Environment=XDG_CACHE_HOME=/var/cache/pcs
+Environment=HOME=/opt/pcs
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

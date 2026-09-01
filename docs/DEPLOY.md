@@ -148,11 +148,19 @@ Then check they are actually scheduled:
 systemctl list-timers 'pcs-*'
 ```
 
-Run one by hand to prove the whole path works:
+Run one by hand to prove the whole path works. Do this **outside market hours**:
+the propose job will screen, size and rank exactly as it will on the timer, and
+then hold at the auto-open step because the market is shut — so it exercises
+everything except the fill itself, without committing capital.
 
 ```bash
-sudo systemctl start pcs-mark.service && sudo journalctl -u pcs-mark.service -n 30 --no-pager
+sudo systemctl start pcs-propose.service && sudo journalctl -u pcs-propose.service -n 60 --no-pager
 ```
+
+This is the only thing that proves the parts a fresh install has never used:
+outbound network from the instance, the yfinance cache under
+`ProtectSystem=strict`, and whether the service account can write everything the
+run needs. A first firing on the timer is a bad place to discover any of them.
 
 ## 5. Serve the dashboard
 
