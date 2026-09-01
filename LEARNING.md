@@ -79,6 +79,9 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
   A quarantine is one-directional — it can only remove a candidate — and it
   expires on its own. See §16.
 - Logins are `/etc/pcs/viewers` (PBKDF2, `pcs/viewers.py`), not `.htpasswd`.
+- `/etc/pcs` is root-owned, 0750, and **read-only** to `pcs-authd`. Anything that
+  service writes lives in `/var/lib/pcs` (`StateDirectory=`): the session key and
+  `overrides.json`. Both outside `$APP`, which is rsynced with `--delete`.
   `htpasswd` is gone on purpose: its `-c` flag TRUNCATES the file it is given,
   so one stray `-c` deleted every login including your own. `viewers.add()`
   cannot express that operation at all.
@@ -647,3 +650,39 @@ Two fixes, both general:
 * The check moved to immediately before the write. A guard that aborts 40 lines
   early leaves the box half-provisioned, which is worse than either outcome it
   was choosing between. It also keeps one `.prev` copy.
+
+
+## 25. A service cannot create a file in a directory it has no write bit on
+
+`pcs-authd` runs as `pcs`; `/etc/pcs` was `0750 root:pcs`. Group `pcs` gets
+`r-x` — no `w` — so `os.open("/etc/pcs/session.key", O_CREAT)` fails and the
+service crash-loops before it ever binds. `ReadWritePaths=/etc/pcs` in the unit
+did not help: systemd's sandbox controls whether a mount is read-only, and
+ordinary file permissions still apply on top of it.
+
+The split that came out of it is the right one regardless of the bug:
+
+* **`/etc/pcs`** — credentials, root-owned, read-only to the service. It can
+  check a password and cannot rewrite the file it checks against. A directory
+  the service could write is one where it could unlink `viewers` and drop in
+  its own.
+* **`/var/lib/pcs`** — the service's own state, via `StateDirectory=pcs`, which
+  creates it with the unit's user and adds it to `ReadWritePaths` automatically.
+
+Atomic writes need this too: `tmp.replace(path)` creates a sibling, which is a
+write to the *directory*, so a file-scoped `ReadWritePaths` would not have been
+enough either.
+
+## 26. One value, one home
+
+The dashboard writes `max_open_positions` and so does `run.py config --set`.
+Applying the override after `settings.json` makes the page authoritative, which
+silently breaks the CLI: `--set` writes, the override keeps winning, and the
+command looks ignored. `cmd_config` therefore **clears the override** for every
+key it writes. Last human action wins, whichever way it was made — which is the
+only rule a person can hold in their head.
+
+The allowlist is enforced on read as well as on write. Hand-editing
+`overrides.json` to add `paper_trading` does nothing: `load_overrides()` filters
+to `DASHBOARD_SETTABLE` before anything is applied. A validator on one side of a
+file is not a validator.

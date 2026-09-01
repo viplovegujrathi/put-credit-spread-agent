@@ -290,7 +290,7 @@ Sets and persists to `data/settings.json`. Repeatable.
 | `stop_loss_credit_multiple` | `2.0` | Stop when buyback costs this × the credit |
 | `stop_loss_pct_of_max_loss` | `0.50` | ... or when down this fraction of max loss |
 | `max_total_collateral` | `2400` | Across the whole book |
-| `max_open_positions` | `4` | |
+| `max_open_positions` | `10` | Also editable on the dashboard |
 | `max_positions_per_sector` | `2` | |
 | `max_positions_per_ticker` | `1` | |
 | `mode` | `paper` | `live` is refused in code |
@@ -429,10 +429,37 @@ but leaves a session they already hold valid until it expires (7 days). To cut
 every session on the box immediately:
 
 ```bash
-sudo rm /etc/pcs/session.key && sudo systemctl restart pcs-authd
+sudo rm /var/lib/pcs/session.key && sudo systemctl restart pcs-authd
 ```
 
-Everyone signs out, including you. If the login page is unreachable, the agent
+Everyone signs out, including you. There is also a **Sign out** button in the
+dashboard header, which drops only your own session.
+
+Two directories, on purpose: `/etc/pcs` holds the credentials and is root-owned
+and read-only to the login service, so that process can check a password and
+cannot rewrite the file it checks against. `/var/lib/pcs` is the service's own
+state — the signing key and any setting changed from the page. Neither is
+inside `/opt/pcs`, which is rsynced with `--delete` on every redeploy.
+
+### Changing the position cap from the dashboard
+
+`Max open positions` is editable on the Positions tab. Saving posts to the
+login service, which writes `/var/lib/pcs/overrides.json`; the agent applies it
+on its **next run** — no restart and no redeploy. The page itself is a static
+file, so the number shown catches up when something re-renders it (the mark
+timer does that every 15 minutes while the market is open).
+
+It is the only setting editable there, and that is a boundary rather than a
+backlog: every login sees the same page and there is no admin tier, so anything
+reachable from the page is reachable by every viewer. `paper_trading`,
+`auto_approve`, `mode` and `starting_cash` are not on the allowlist — nothing
+reachable from a browser can arm trading or waive the human approval gate.
+
+`./run.py config --set max_open_positions=N` still works and takes precedence:
+it clears the dashboard override for that key, so the last change wins whichever
+way it was made.
+
+If the login page is unreachable, the agent
 itself is unaffected — timers, marks and exits do not go through it:
 
 ```bash
