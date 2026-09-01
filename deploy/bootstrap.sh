@@ -242,9 +242,26 @@ ln -sf "$CONF" /etc/nginx/sites-enabled/pcs
 for other in /etc/nginx/sites-enabled/*; do
   [ "$(basename "$other")" = "pcs" ] && continue
   if grep -qE "server_name[^;]*\b$(echo "$DOMAIN" | sed 's/\./\\./g')\b" "$other" 2>/dev/null; then
-    warn "$(basename "$other") also claims $DOMAIN. nginx will serve whichever"
-    warn "loads first, which is probably not the dashboard. Remove the name from"
-    warn "it (certbot adds one when it is allowed to edit config) and reload."
+    OTHER_NAME="$(basename "$other")"
+    cat >&2 <<EOF
+
+!! $OTHER_NAME also claims $DOMAIN.
+
+   Two server blocks naming one host on 443 is not an nginx error: the first one
+   loaded wins, and sites-enabled sorts alphabetically -- so "$OTHER_NAME" beats
+   "pcs" and you get that site instead of the dashboard, with no error anywhere.
+
+   An older version of this script let \`certbot --nginx\` edit config, which is
+   how the name got there. If $OTHER_NAME is Ubuntu's stock welcome page, it has
+   no purpose on a box dedicated to this agent -- disable it:
+
+       sudo rm /etc/nginx/sites-enabled/$OTHER_NAME
+       sudo nginx -t && sudo systemctl reload nginx
+
+   Reversible: ln -s /etc/nginx/sites-available/$OTHER_NAME /etc/nginx/sites-enabled/
+   If you need that site, delete just the "$DOMAIN" server_name lines from it.
+
+EOF
   fi
 done
 
