@@ -250,16 +250,24 @@ ruff check .
 
 ## Before this touches real money
 
-1. **Options level.** The Robinhood account this agent can reach is
-   `option_level_2` — long options and cash-secured puts only. **Spreads need
-   level 3.** Until that is upgraded, live execution is impossible regardless
-   of what the code does.
-2. **Size on the broker's chain**, not Yahoo's — see the two-phase flow above.
-3. **Re-confirm during market hours.** A proposal built on a closing snapshot
+1. ~~**Options level.**~~ Cleared 2026-08-31: the agentic account is now
+   `option_level_3`, which is what a spread requires. Re-verify with
+   `get_accounts` rather than trusting this line.
+2. **Fund it, or resize to it.** That same account holds **$14.72** of buying
+   power — its value is in stock, not cash. Every current proposal needs
+   $624–$991 of collateral, so the balance rule above would refuse all of them.
+   Live sizing has to start from the real buying power, and at that level the
+   $1,000 collateral cap and $100 minimum credit leave very little that
+   qualifies. Permission to trade spreads is not the same as being able to
+   afford one.
+3. **Size on the broker's chain**, not Yahoo's — see the two-phase flow above.
+4. **Re-confirm during market hours.** A proposal built on a closing snapshot
    is indicative; the package may not be there at 09:30.
-4. **Paper first.** Run the full weekly cadence long enough to see winners,
+5. **Paper first.** Run the full weekly cadence long enough to see winners,
    losers, and at least one tested short strike.
-5. The human gate is not a formality. Read the ticket.
+6. The human gate is not a formality. Read the ticket. The agent has no path to
+   placing a live order — `open_approved` refuses a non-paper ledger in code,
+   and the level upgrade does not change that.
 
 *Not financial advice. This is a tool for evaluating a strategy the user
 already decided to run.*

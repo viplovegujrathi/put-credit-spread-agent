@@ -70,7 +70,11 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
 ### Current state (2026-08-31)
 
 - Paper only. `Settings.mode == "paper"`, $3,000 starting cash, real ledger flat.
-- Live execution is **blocked** — see §10; nothing about that has changed.
+- The agentic Robinhood account reached level 3 on 2026-08-31, so spreads are
+  now *permitted* there. It holds $14.72 of buying power, so none are
+  *affordable*. See §10. Nothing has been placed.
+- Placing a live order remains a human action. `open_approved` and `apply_exits`
+  both refuse a live ledger in code; that is unchanged by the level upgrade.
 - 99 tests, ruff clean.
 
 ---
@@ -206,16 +210,34 @@ produced a tradeable spread. Price snapshots also cache to
 `data/snapshots.json`, so iterating on the sizing logic no longer costs a
 full index download (`--max-cache-age 180`).
 
-## 10. The account that can trade is not the account that can trade *this*
+## 10. Permission and capital are two different blockers
 
-The Robinhood connection is live and the agentic account is real. It is also
-**`option_level_2`** — long options and cash-secured puts. **Credit spreads
-need level 3.** The level-3 account in the same login is not the one the agent
-can reach.
+The agentic Robinhood account is `421118043` ("Agentic", limited margin) — the
+only one of five in this login that the agent can reach.
 
-This is a hard blocker for live execution that no amount of correct code fixes,
-and it is exactly the kind of thing that stays invisible until the first order
-rejects. It is now the first item in the README's go-live list.
+**Options level: resolved.** It was `option_level_2` (long options and
+cash-secured puts, no spreads). Re-checked 2026-08-31: it is now
+**`option_level_3`**, which is what a credit spread requires. Verify with
+`get_accounts` rather than trusting this line — levels change.
+
+**Capital: still binding.** Same date, `get_portfolio` on that account:
+
+| | |
+|---|---|
+| total value | $1,208.08 |
+| equity (held in stock) | $1,193.36 |
+| cash / buying power | **$14.72** |
+
+The paper agent is configured for $3,000 and its proposals size to $624–$991 of
+collateral. Against the real account every one of them fails the balance rule in
+§12 — not because the code is wrong but because the money is in stock, not cash.
+Going live would need `Settings.starting_cash` reset to the real buying power,
+at which point the $1,000 per-trade cap and $100 minimum credit leave almost no
+qualifying spread. This is a sizing problem, not a permissions one.
+
+The general lesson: "can this account trade spreads" and "can this account
+afford one" fail in completely different places, and clearing the first says
+nothing about the second.
 
 ## 11. Small environment things worth writing down
 
