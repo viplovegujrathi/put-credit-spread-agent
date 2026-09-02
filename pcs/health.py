@@ -35,6 +35,11 @@ HEALTH_JSON = DATA_DIR / "health.json"
 # deploy/pcs-mark.timer). Two missed intervals is the point at which "the timer
 # is slow" stops being the likely explanation.
 MARK_INTERVAL_MIN = 15
+# The watchlist is meant to refresh several times a day (the timer asks for
+# hourly). Four a day is one every six hours, so eight hours without a fresh
+# file means the cadence has already fallen below the floor -- late enough not
+# to fire on one missed run, early enough to still be the same trading day.
+WATCH_STALE_AFTER_H = 8
 MARK_MISSING_AFTER_MIN = MARK_INTERVAL_MIN * 2
 
 # How many runs to keep. Enough to see a week of marks; small enough that the
@@ -146,8 +151,9 @@ def record(kind: str, path=None, **stats) -> Run:
 # function only DETECTS; delivery is the caller's problem, and the dashboard
 # renders whatever comes back as a banner.
 
-def ledger_evidence(led, kind: str) -> str:
-    """The newest timestamp in the LEDGER proving a loop ran, or "".
+def prior_evidence(led, kind: str, watch_at: str = "") -> str:
+    """The newest timestamp proving a loop ran, from somewhere other than the
+    health record itself -- or "".
 
     The health record starts empty the day this module is deployed, so on a box
     that has been trading for weeks `last("mark")` is None and the page would
@@ -161,6 +167,12 @@ def ledger_evidence(led, kind: str) -> str:
         return max((p.marked_at for p in led.open_positions if p.marked_at), default="")
     if kind == "propose":
         return max((p.opened_at for p in led.positions if p.opened_at), default="")
+    if kind == "watch":
+        # watchlist.json stamps itself, so the file IS the receipt. Passed in
+        # rather than read here: this module knows about the ledger and the
+        # clock, and dragging the screener import chain into telemetry to
+        # answer one question is the wrong trade.
+        return watch_at
     return ""
 
 
@@ -177,15 +189,16 @@ class Alert:
         return _SEV_RANK.get(self.severity, 9)
 
 
-def _age_min(stamp: str, now: dt.datetime) -> float | None:
+def _age_min(stamp: str, now: dt.datetime | None = None) -> float | None:
     try:
-        return (now - dt.datetime.fromisoformat(stamp[:19])).total_seconds() / 60
+        return ((now or dt.datetime.now())
+                - dt.datetime.fromisoformat(stamp[:19])).total_seconds() / 60
     except (ValueError, TypeError):
         return None
 
 
 def alerts(led, settings, health: Health | None = None, sess=None,
-           now: dt.datetime | None = None) -> list[Alert]:
+           now: dt.datetime | None = None, watch_at: str = "") -> list[Alert]:
     """The five things the operator seat asked to be told, not shown.
 
     Ordered by severity, then by how much money the state is costing while it
@@ -229,7 +242,7 @@ def alerts(led, settings, health: Health | None = None, sess=None,
         if last_mark is None:
             # No RECORD is not the same as never ran. Fall back to the ledger
             # before crying wolf, and only then treat the marks as absent.
-            seen = ledger_evidence(led, "mark")
+            seen = prior_evidence(led, "mark")
             if seen:
                 last_mark = Run("mark", seen, detail="reconstructed from the ledger")
             else:
@@ -252,6 +265,34 @@ def alerts(led, settings, health: Health | None = None, sess=None,
                     f"{last_mark.stale} position(s) failed to re-price",
                     f"their P&L is frozen at the last good mark and no exit can be "
                     f"decided on them: {names}"))
+
+    # 6. The watchlist is the one thing on this page with no ledger behind it:
+    #    if the refresh stops, every name keeps its last quote and the tab goes
+    #    on looking populated and current. The file stamps itself, so age is
+    #    the honest measure -- not whether the timer fired, and not whether the
+    #    job exited zero.
+    last_watch = health.last("watch")
+    seen_at = watch_at or prior_evidence(led, "watch", watch_at)
+    age_h = None
+    if seen_at:
+        mins = _age_min(seen_at, now)
+        age_h = mins / 60 if mins is not None else None
+    if age_h is not None and age_h > WATCH_STALE_AFTER_H:
+        out.append(Alert(
+            "watchlist_stale", WARNING,
+            f"the watchlist has not refreshed for {age_h:.0f} hours",
+            f"every name still shows its last quote, so the tab looks current "
+            f"and is not. The timer asks for hourly and the floor is one every "
+            f"{WATCH_STALE_AFTER_H}h. systemctl status pcs-watch.timer"))
+    elif not seen_at and last_watch is None:
+        out.append(Alert(
+            "watch_never_ran", WARNING, "the watchlist has never been built",
+            "nothing is being screened between proposals. Run ./run.py watch"))
+    if last_watch is not None and not last_watch.ok:
+        out.append(Alert(
+            "watch_failed", WARNING, "the last watchlist refresh failed",
+            f"{last_watch.detail or 'see logs'} "
+            f"-- journalctl -u pcs-watch -n 50"))
 
     # 5. Book-wide drawdown, before any single stop fires. Each position can sit
     #    just under its own stop while the book as a whole is deeply underwater.

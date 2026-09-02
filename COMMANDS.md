@@ -441,6 +441,30 @@ cannot rewrite the file it checks against. `/var/lib/pcs` is the service's own
 state — the signing key and any setting changed from the page. Neither is
 inside `/opt/pcs`, which is rsynced with `--delete` on every redeploy.
 
+### Is the watchlist actually refreshing?
+
+`pcs-watch.timer` asks for **hourly, around the clock** — 24 attempts a day.
+What matters is not that the timer fired but that the file is fresh, so the
+page measures the file:
+
+- The Watchlist banner prints the age next to the timestamp (`refreshed
+  2026-09-01 08:12:04 (3h ago)`), and appends **overdue** past 8 hours.
+- Past 8 hours an alert appears at the top of the Positions tab. Eight hours is
+  the floor: four refreshes a day is one every six, so the alert fires once the
+  cadence has fallen below that, and not on a single missed run
+  (`health.WATCH_STALE_AFTER_H`).
+- A refresh that *raised* is recorded as a failed run and reported separately —
+  a stale file next to a green timer is the trap, because the last good
+  watchlist is still on disk looking fine.
+
+```bash
+systemctl list-timers pcs-watch.timer --no-pager
+```
+
+```bash
+sudo journalctl -u pcs-watch.service -n 50 --no-pager
+```
+
 ### Sorting the watchlist
 
 The Watchlist table sorts on any column: click a header, or use the **Sort by**

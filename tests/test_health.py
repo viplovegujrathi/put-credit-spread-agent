@@ -193,8 +193,8 @@ def test_the_ledger_fallback_still_reports_a_genuinely_stale_mark(
 def test_ledger_evidence_reads_propose_from_the_positions_themselves(led, settings):
     """A position cannot exist unless propose ran."""
     led.positions = [_pos()]
-    assert health.ledger_evidence(led, "propose")
-    assert health.ledger_evidence(led, "watch") == ""
+    assert health.prior_evidence(led, "propose")
+    assert health.prior_evidence(led, "watch") == ""
 
 
 def test_an_empty_book_does_not_alert_about_marks(led, settings, open_market):
@@ -286,3 +286,53 @@ def test_critical_alerts_sort_above_informational_ones(led, settings):
     a = health.alerts(led, settings, health.Health(), now=dt.datetime.now())
     assert [x.severity for x in a] == sorted([x.severity for x in a],
                                              key=lambda s: health._SEV_RANK[s])
+
+
+# --- the watchlist refresh cadence ------------------------------------------
+def test_a_watchlist_that_has_not_refreshed_alerts(led, settings):
+    """The one thing on the page with no ledger behind it: if the refresh
+    stops, every name keeps its last quote and the tab goes on looking current.
+    Age is the honest measure -- not whether the timer fired."""
+    old = (NOW - dt.timedelta(hours=health.WATCH_STALE_AFTER_H + 3)).isoformat()
+    a = [x for x in health.alerts(led, settings, health.Health(), now=NOW, watch_at=old)
+         if x.kind == "watchlist_stale"]
+    assert a and "pcs-watch.timer" in a[0].detail
+
+
+def test_a_fresh_watchlist_is_silent(led, settings):
+    fresh = (NOW - dt.timedelta(hours=1)).isoformat()
+    assert not [x for x in health.alerts(led, settings, health.Health(), now=NOW,
+                                         watch_at=fresh)
+                if x.kind.startswith("watch")]
+
+
+def test_the_stale_threshold_sits_under_the_promised_cadence(led, settings):
+    """Four refreshes a day is one every six hours. The alert has to fire
+    before the cadence has silently halved, and not on one missed run."""
+    assert 6 < health.WATCH_STALE_AFTER_H <= 12
+
+
+def test_a_watchlist_that_was_never_built_alerts(led, settings):
+    a = [x for x in health.alerts(led, settings, health.Health(), now=NOW)
+         if x.kind == "watch_never_ran"]
+    assert a and "./run.py watch" in a[0].detail
+
+
+def test_a_failed_refresh_is_reported_even_though_the_file_is_still_there(
+        led, settings):
+    """A stale file plus a green timer is the trap: the job ran, it raised, and
+    the last good watchlist is still on disk looking fine."""
+    fresh = (NOW - dt.timedelta(hours=1)).isoformat()
+    h = health.Health(runs=[health.Run("watch", NOW.isoformat(), ok=False,
+                                       detail="HTTPError: 429 Too Many Requests")])
+    a = [x for x in health.alerts(led, settings, h, now=NOW, watch_at=fresh)
+         if x.kind == "watch_failed"]
+    assert a and "429" in a[0].detail and "journalctl" in a[0].detail
+
+
+def test_watch_evidence_comes_from_the_file_not_from_the_ledger(led, settings):
+    """Nothing in the ledger proves a screen ran -- watching never writes a
+    position. watchlist.json stamps itself, so the file is the receipt."""
+    assert health.prior_evidence(led, "watch") == ""
+    assert health.prior_evidence(led, "watch", "2026-09-01T10:00:00") \
+        == "2026-09-01T10:00:00"

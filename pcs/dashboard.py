@@ -705,7 +705,8 @@ def _alerts_panel(alerts: list) -> str:
     return f'<div class="alerts"><div class="ahead">{_e(head)}</div>{rows}</div>'
 
 
-def _heartbeat(led: Ledger, hb: health.Health, sess: SessionState) -> str:
+def _heartbeat(led: Ledger, hb: health.Health, sess: SessionState,
+               watch_at: str = "") -> str:
     """Is the agent running? A dead scheduler and a quiet market render the
     same flat book, so the page has to say which one it is looking at."""
     bits = []
@@ -718,7 +719,7 @@ def _heartbeat(led: Ledger, hb: health.Health, sess: SessionState) -> str:
             # older than the record and already knows: saying "never run" over
             # four positions that only propose could have created, each marked
             # four hours ago, makes the whole line unreadable.
-            seen = health.ledger_evidence(led, kind)
+            seen = health.prior_evidence(led, kind, watch_at)
             if not seen:
                 bits.append(f'<span class="hb-item"><b>{label}</b> '
                             f'<span class="hb-bad">never run</span></span>')
@@ -972,10 +973,16 @@ def _watch_pill() -> str:
     return f"{ready} ready" if ready else f"{len(wl.entries)} watched"
 
 
-def _watchlist_panel() -> str:
+def _watchlist_panel(wl: watchlist.Watchlist | None = None) -> str:
     """What the agent is watching. Read from disk so `watch` can refresh it on
-    its own schedule -- around the clock -- without any other command running."""
-    wl = watchlist.load()
+    its own schedule -- around the clock -- without any other command running.
+
+    `render` already loaded it to date-stamp the heartbeat, so it hands the
+    same object down rather than reading the file twice and risking two halves
+    of one page describing two different refreshes.
+    """
+    if wl is None:
+        wl = watchlist.load()
     if wl is None:
         return ('<div class="rules"><ul><li>No watchlist yet. Build one with '
                 '<code>./run.py watch</code> &mdash; it never opens anything, so it '
@@ -999,14 +1006,30 @@ def _watchlist_panel() -> str:
 
     # A stale premium is not a premium you can get. Say so above the numbers,
     # not in a footnote under them.
+    # "Refreshed 2026-08-31 23:12:10" makes the reader do the subtraction, and
+    # the answer to "is this still being refreshed?" is the whole reason the
+    # timestamp is here. Say the age.
+    mins = health._age_min(wl.generated_at)
+    if mins is None:
+        age = ""
+    elif mins < 90:
+        age = f" ({mins:.0f}m ago)"
+    elif mins < 60 * 48:
+        age = f" ({mins / 60:.0f}h ago)"
+    else:
+        age = f" ({mins / 1440:.0f}d ago)"
+    if mins is not None and mins / 60 > health.WATCH_STALE_AFTER_H:
+        age += " &mdash; overdue"
+
     if wl.tradeable:
         banner = ('<div class="wnote ok">Priced on a live market '
-                  f'&mdash; refreshed {_e(wl.generated_at.replace("T", " "))}</div>')
+                  f'&mdash; refreshed {_e(wl.generated_at.replace("T", " "))}'
+                  f"{age}</div>")
     else:
         banner = (f'<div class="wnote">Priced on a {_e(wl.quote_quality.replace("_", " "))} '
                   f'({_e(wl.phase)}) &mdash; these show where each name stands, '
                   f'not what it would fill at. Refreshed '
-                  f'{_e(wl.generated_at.replace("T", " "))}.</div>')
+                  f'{_e(wl.generated_at.replace("T", " "))}{age}.</div>')
 
     # READY first, then the ones a decision could still be made about, then
     # the ones that are out for a reason. Sorting the SIGNAL column should walk
@@ -1212,7 +1235,9 @@ def render(led: Ledger, props: list[Proposal], settings: Settings,
         pending_txt = "opened automatically on the next run"
     sectors = ", ".join(f"{k} x{v}" for k, v in sorted(led.sector_counts().items())) or "none"
     hb = health.load()
-    alerts = health.alerts(led, settings, hb, sess)
+    wl = watchlist.load()
+    watch_at = wl.generated_at if wl else ""
+    alerts = health.alerts(led, settings, hb, sess, watch_at=watch_at)
 
     # Worst case as a fraction of the account, not just as a dollar amount.
     # "$1,953 at risk" and "65% of everything you have" are the same number and
@@ -1281,7 +1306,7 @@ and dark palette" title="Light / dark">&#9681;</button>
 <div class="sub">{_e(settings.account_label)} &middot; mode <b>{_e(led.mode)}</b> &middot;
 opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H:%M}</div>
 <div class="banner">{_e(sess.banner)}</div>
-{_heartbeat(led, hb, sess)}
+{_heartbeat(led, hb, sess, watch_at)}
 
 <div class="tabs" role="tablist">
 <button role="tab" aria-selected="true" data-t="now">Positions</button>
@@ -1322,7 +1347,7 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 <p class="lede">Names the agent is tracking, with the spread it would take and
 why it has not. Refreshed on its own schedule &mdash; watching is not trading,
 so this runs around the clock.</p>
-{_watchlist_panel()}
+{_watchlist_panel(wl)}
 </section>
 
 <section class="panel" id="p-learn" hidden>

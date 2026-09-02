@@ -8,7 +8,7 @@ import datetime as dt
 
 import pytest
 
-from pcs import dashboard, health
+from pcs import dashboard, health, watchlist
 from pcs.ledger import Ledger, Position
 from pcs.session import SessionState
 
@@ -49,9 +49,19 @@ def _pos(symbol="TST", short=100.0, spot=110.0, credit=1.0, marked_min_ago=5,
     return p
 
 
-def _render(led, settings, sess, tmp_path, monkeypatch, runs=()):
+def _render(led, settings, sess, tmp_path, monkeypatch, runs=(), watch_age_h=0.5):
     monkeypatch.setattr(health, "HEALTH_JSON", tmp_path / "health.json")
     monkeypatch.setattr(dashboard, "WEB_INDEX", None)
+    # Isolate from the repo's own data/watchlist.json, which is real and old:
+    # without this every render here inherits a months-stale watchlist and the
+    # page under test grows an alert that has nothing to do with the test.
+    monkeypatch.setattr(watchlist, "load", lambda *a, **k: None if watch_age_h is None
+                        else watchlist.Watchlist(
+                            generated_at=(dt.datetime.now()
+                                          - dt.timedelta(hours=watch_age_h)
+                                          ).isoformat(timespec="seconds"),
+                            quote_quality="live", phase="open", tradeable=True,
+                            entries=[]))
     if runs:
         health.save(health.Health(runs=list(runs)), tmp_path / "health.json")
     out = tmp_path / "dash.html"

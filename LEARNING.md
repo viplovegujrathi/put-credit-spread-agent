@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 358 tests, ruff clean.
+- 365 tests, ruff clean.
 
 ---
 
@@ -791,4 +791,34 @@ survives the breakpoint.
 
 Same class of bug as the nginx marker: the thing that worked was checked at the
 width it was built at.
+
+## 33. Record the failure, or a dead job is indistinguishable from a quiet one
+
+`health.record("watch", ...)` was the **last** line of `cmd_watch`. A run that
+raised -- a network blip, a rate limit on a 500-name screen -- wrote nothing at
+all, so a job failing every hour looked exactly like a timer that had never
+fired. Both render as silence.
+
+The screen is now wrapped and records `ok=False` with the exception before
+re-raising. Same rule as §29 from the other side: §29 was *absence of record is
+not absence of event*; this is *presence of the event has to survive the event
+going wrong*.
+
+## 34. Measure the artifact, not the schedule
+
+"Refresh the watchlist several times a day" cannot be enforced on the timer.
+`OnCalendar=hourly` can fire twenty-four times and leave the file untouched
+twenty-four times, and the unit still reports success on a `oneshot` that
+exited zero after writing nothing new.
+
+The watchlist stamps itself, so **age of the file** is the only honest measure
+of the cadence -- and it is also the only thing on the page with no ledger
+behind it. If the refresh stops, every name keeps its last quote and the tab
+goes on looking populated and current. `WATCH_STALE_AFTER_H = 8` sits under the
+promised four-a-day (one every six hours) so the alert fires once the cadence
+has actually fallen below the floor, not on one missed run.
+
+The banner now prints the age beside the timestamp. "Refreshed 2026-08-31
+23:12:10" makes the reader do the subtraction, and that subtraction is the
+entire question the timestamp was there to answer.
 

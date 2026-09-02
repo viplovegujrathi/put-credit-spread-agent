@@ -205,3 +205,28 @@ def test_the_reason_is_shown_when_there_are_no_risk_blockers(monkeypatch):
 def test_the_reason_is_escaped(monkeypatch):
     html = _panel(monkeypatch, _entry(blockers=["<script>x</script>"]))
     assert "<script>" not in html
+
+
+# --- the refresh has to leave a trace even when it fails --------------------
+def test_a_failed_refresh_is_recorded(tmp_path, monkeypatch, settings):
+    """health.record used to be the LAST line of cmd_watch, so a run that
+    raised left no trace at all -- indistinguishable from a timer that never
+    fired. That gap is exactly what makes a refresh cadence unverifiable."""
+    import argparse
+
+    import run as cli
+    from pcs import health, pipeline
+
+    monkeypatch.setattr(health, "HEALTH_JSON", tmp_path / "health.json")
+
+    def boom(*a, **kw):
+        raise RuntimeError("429 Too Many Requests")
+
+    monkeypatch.setattr(pipeline, "run_screen", boom)
+    args = argparse.Namespace(symbols=None, max_cache_age=60, contracts=1)
+    with pytest.raises(RuntimeError):
+        cli.cmd_watch(args, settings)
+
+    run = health.load(tmp_path / "health.json").last("watch")
+    assert run is not None and run.ok is False
+    assert "429" in run.detail

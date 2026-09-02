@@ -594,13 +594,22 @@ def cmd_watch(args, settings: Settings) -> int:
     That is why it can run around the clock while `propose` cannot: pricing a
     name at 02:00 tells you where it stands, filling one there does not.
     """
-    res = pipeline.run_screen(settings, symbols=args.symbols, progress=_progress,
-                              cache_max_age_min=args.max_cache_age)
-    led = ledger_mod.Ledger.load(settings)
-    cands = pipeline.shortlist(res, include_tight=True)
-    sized = pipeline.size_candidates(cands, res, settings)
-    pipeline.apply_earnings(sized, res, settings)
-    wl = watchlist.build(res, sized, led, settings, contracts=args.contracts)
+    # A failed screen used to leave NO trace: health.record was the last line
+    # of this function, so a run that raised looked exactly like a run that
+    # never fired. That is the difference between "the watchlist is stale
+    # because the network was down" and "the timer is dead", and it is the only
+    # thing that makes a refresh cadence verifiable rather than assumed.
+    try:
+        res = pipeline.run_screen(settings, symbols=args.symbols, progress=_progress,
+                                  cache_max_age_min=args.max_cache_age)
+        led = ledger_mod.Ledger.load(settings)
+        cands = pipeline.shortlist(res, include_tight=True)
+        sized = pipeline.size_candidates(cands, res, settings)
+        pipeline.apply_earnings(sized, res, settings)
+        wl = watchlist.build(res, sized, led, settings, contracts=args.contracts)
+    except Exception as exc:                       # noqa: BLE001 -- then re-raised
+        health.record("watch", ok=False, detail=f"{type(exc).__name__}: {exc}"[:200])
+        raise
 
     print(BAR)
     print(f"WATCHLIST  {res.session.now_et:%Y-%m-%d %H:%M %Z}   {len(wl.entries)} name(s)")
