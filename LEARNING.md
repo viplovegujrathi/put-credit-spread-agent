@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 351 tests, ruff clean.
+- 358 tests, ruff clean.
 
 ---
 
@@ -763,4 +763,32 @@ said `+$53.15`. Small, and it scales with contract count.
 `open_pl` and `pct_of_max_credit` now both work off `credit_dollars`, which also
 makes unrealised consistent with `realized_pl` (already net of both open and
 close fees) and means the take-profit rule fires on money the account keeps.
+
+## 31. Sort on the key, not on the rendered cell
+
+The dashboard is a static file behind nginx, so sorting is client-side or it
+does not exist. The temptation is to sort on the text already in the cell --
+but that cell holds `$849`, `17.8%`, `2026-10-02` and `—`, which is four
+different parses and at least one of them silently wrong (`parseFloat` reads
+every ISO date in the column as `2026`, so they all tie).
+
+The value that produced the text is in hand at render time. `_table()` takes a
+grid of keys parallel to `rows` and emits `data-s`; the column's type comes from
+the first key that exists, so the caller declares it by passing a number or a
+string rather than by passing a flag as well.
+
+`None` means *this row has nothing to rank on here* -- a name with no sizeable
+spread has no premium. Those rows sink in **both** directions, so reversing the
+sort never buries the rows the reader was looking at.
+
+## 32. A header you cannot see is not a control
+
+The table collapses to a stack of cards under 700px and `thead` becomes
+`display:none`. Click-to-sort headers alone would therefore have been a feature
+that silently does not exist on a phone -- which is where a dashboard behind a
+login actually gets read. The select above the table drives the same code and
+survives the breakpoint.
+
+Same class of bug as the nginx marker: the thing that worked was checked at the
+width it was built at.
 

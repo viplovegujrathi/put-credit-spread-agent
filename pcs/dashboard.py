@@ -160,6 +160,25 @@ border:1px solid var(--accln);background:var(--accbg);color:var(--accent);
 font:inherit;font-weight:650}
 .setf button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
 .setnote{font-size:11.5px;color:var(--dim)}
+.sortbar{display:flex;align-items:center;gap:8px;margin:0 0 11px}
+.sortbar label{font-size:11.5px;color:var(--dim);letter-spacing:.02em}
+.sortsel{appearance:none;cursor:pointer;padding:5px 26px 5px 9px;border-radius:8px;
+border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;
+font-size:12.5px;background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),
+linear-gradient(135deg,var(--dim) 50%,transparent 50%);
+background-position:calc(100% - 14px) 52%,calc(100% - 9px) 52%;
+background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+.sortsel:focus{outline:2px solid var(--accln);outline-offset:1px}
+.sortdir{appearance:none;cursor:pointer;width:28px;height:28px;border-radius:8px;
+border:1px solid var(--line);background:var(--panel);color:var(--ink2);font:inherit;
+line-height:1}
+.sortdir:hover:not(:disabled){color:var(--accent);border-color:var(--accln)}
+.sortdir:disabled{opacity:.4;cursor:default}
+th.s{cursor:pointer;user-select:none;white-space:nowrap}
+th.s:hover,th.s:focus-visible{color:var(--accent)}
+th.s::after{content:'\2195';margin-left:5px;font-size:9px;opacity:.3}
+th.s[aria-sort=ascending]::after{content:'\2191';opacity:1;color:var(--accent)}
+th.s[aria-sort=descending]::after{content:'\2193';opacity:1;color:var(--accent)}
 .gearwrap{position:relative;flex:none}
 .gearpop{position:absolute;right:0;top:42px;z-index:40;width:272px;padding:14px;
 border-radius:14px;border:1px solid var(--line);background:var(--panel);
@@ -344,7 +363,13 @@ h1{font-size:16.5px} h2{margin:24px 0 10px}
 .themer{width:31px;height:31px}
 .cards{grid-template-columns:repeat(auto-fit,minmax(144px,1fr));gap:9px}
 .card{padding:12px 13px;border-radius:11px} .card .v{font-size:19px}
-.tabs{gap:0;margin:18px 0 14px} .tabs button{padding:10px 13px;font-size:12.5px}
+.tabs{gap:0;margin:18px 0 14px}
+/* nowrap + overflow-x on .tabs means these must not shrink, or six tabs
+   squeeze into six unreadable slivers instead of scrolling. */
+.tabs button{padding:10px 13px;font-size:12.5px;flex:none}
+.sortbar{flex-wrap:wrap;margin-bottom:9px}
+.sortsel{font-size:13px;padding:7px 26px 7px 10px}
+.sortdir{width:32px;height:32px}
 .scroll{overflow-x:visible;border-radius:0}
 table{min-width:0;border:none;background:none;overflow:visible;box-shadow:none}
 thead{display:none}
@@ -364,6 +389,25 @@ tbody td .c{text-align:right;min-width:0;overflow-wrap:anywhere}
 .chk{grid-template-columns:20px 1fr;padding:10px 12px}
 .rules{padding:14px 17px} .rules ul{padding-left:19px}
 .lesson{padding:13px 15px}
+}
+
+/* Phone. The masthead is the only thing that cannot just reflow: three words
+   of title and a 3-word tagline in caps eat five lines before any data shows.
+   The tagline is decoration -- it goes. */
+@media (max-width:520px){
+.top{gap:9px;margin-bottom:5px}
+.brand{gap:10px}
+.brandtag{display:none}
+h1{font-size:16px;margin:0}
+.logo{width:36px;height:36px}
+.sub{font-size:12px;margin-bottom:13px}
+.themer{width:36px;height:36px}                 /* thumb, not cursor */
+.logoutf{margin-left:5px}
+.logoutf button{height:36px;padding:0 11px;font-size:12.5px}
+.gearpop{width:min(272px,calc(100vw - 26px));top:44px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}
+.card .v{font-size:18px}
+.hb{gap:5px 13px}
 }
 
 @media (prefers-reduced-motion:reduce){
@@ -432,20 +476,76 @@ def _expiry_cell(expiration: str, dte: int) -> str:
             f"<div style='margin-top:3px'>{_dte_badge(dte)}</div>")
 
 
-def _table(headers: list[str], rows: list[list[str]]) -> str:
+def _table(headers: list[str], rows: list[list[str]],
+           sorts: list[list] | None = None, name: str = "") -> str:
     """One table builder for all three tables.
 
     Every cell carries its own column label as `data-l`. On a phone the table
     collapses to a stack of cards and that attribute becomes the row label, so
     headers and labels cannot drift apart -- they are the same list.
+
+    `sorts` makes the table sortable: a grid parallel to `rows` giving one sort
+    key per cell. Numbers sort numerically, strings as text, and `None` always
+    sinks to the bottom -- a row with no spread has no premium to rank, and
+    burying it at either end of every ordering is the only honest place for it.
+
+    The KEY is emitted, not parsed back out of the rendered cell. "$849" and
+    "17.8%" and "2026-10-02" are three different parses and one of them is
+    wrong; the value that produced the text is already here.
+
+    Two controls, because `thead` is `display:none` at phone widths and a
+    header that is not on screen cannot be clicked: the header row sorts on
+    desktop, and a select above the table does the same job at every width.
     """
-    head = "".join(f"<th>{_e(h)}</th>" for h in headers)
+    if sorts is None:
+        head = "".join(f"<th>{_e(h)}</th>" for h in headers)
+        body = "".join(
+            "<tr>" + "".join(f'<td data-l="{_e(h)}"><span class="c">{c}</span></td>'
+                             for h, c in zip(headers, r, strict=True)) + "</tr>"
+            for r in rows)
+        return (f'<div class="scroll"><table><thead><tr>{head}</tr></thead>'
+                f"<tbody>{body}</tbody></table></div>")
+
+    # Column type from the first key that exists, so the caller states it by
+    # passing a number or a string rather than by passing a flag as well.
+    types, dirs = [], []
+    for i in range(len(headers)):
+        first = next((g[i] for g in sorts if g[i] is not None), None)
+        num = isinstance(first, (int, float)) and not isinstance(first, bool)
+        types.append("n" if num else "s")
+        # First click shows the most useful end first: biggest premium, best
+        # win estimate, widest cushion. Text and rank columns read forwards.
+        dirs.append(-1 if num and headers[i] in _DESC_FIRST else 1)
+
+    head = "".join(
+        f'<th class="s" data-i="{i}" data-t="{t}" data-d="{d}" '
+        f'role="button" tabindex="0" aria-sort="none" '
+        f'title="Sort by {_e(h)}">{_e(h)}</th>'
+        for i, (h, t, d) in enumerate(zip(headers, types, dirs, strict=True)))
     body = "".join(
-        "<tr>" + "".join(f'<td data-l="{_e(h)}"><span class="c">{c}</span></td>'
-                         for h, c in zip(headers, r, strict=True)) + "</tr>"
-        for r in rows)
-    return (f'<div class="scroll"><table><thead><tr>{head}</tr></thead>'
-            f"<tbody>{body}</tbody></table></div>")
+        "<tr>" + "".join(
+            f'<td data-l="{_e(h)}"'
+            + ("" if k is None else f' data-s="{_e(str(k))}"')
+            + f'><span class="c">{c}</span></td>'
+            for h, c, k in zip(headers, r, g, strict=True)) + "</tr>"
+        for r, g in zip(rows, sorts, strict=True))
+    opts = "".join(f'<option value="{i}">{_e(h)}</option>'
+                   for i, h in enumerate(headers))
+    tid = _e(name or "t")
+    return (
+        f'<div class="sortbar"><label for="sort-{tid}">Sort by</label>'
+        f'<select id="sort-{tid}" class="sortsel"><option value="">'
+        f"default order</option>{opts}</select>"
+        f'<button type="button" class="sortdir" aria-label="Reverse the order" '
+        f'title="Reverse the order" disabled>&#8645;</button></div>'
+        f'<div class="scroll"><table class="sortable" data-name="{tid}">'
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>")
+
+
+# Columns where the interesting end is the top one. Everything else reads
+# forwards: A before Z, READY before BLOCKED, soonest earnings first.
+_DESC_FIRST = frozenset({"premium", "return", "cushion", "off high", "credit",
+                         "p&l"})
 
 
 def _mark_state(p: Position, sess: SessionState | None) -> tuple[str, str]:
@@ -908,7 +1008,12 @@ def _watchlist_panel() -> str:
                   f'not what it would fill at. Refreshed '
                   f'{_e(wl.generated_at.replace("T", " "))}.</div>')
 
-    rows = []
+    # READY first, then the ones a decision could still be made about, then
+    # the ones that are out for a reason. Sorting the SIGNAL column should walk
+    # that ladder, not the alphabet.
+    order = {"READY": 0, "NEAR": 1, "BLOCKED": 2, "EARNINGS": 3,
+             "NO_FIT": 4, "STRETCHED": 5}
+    rows, keys = [], []
     for e in wl.entries:
         # `blockers` holds the real reasons from risk.check() and used to be
         # computed and thrown away, with `reason` reachable only by hovering.
@@ -950,8 +1055,21 @@ def _watchlist_panel() -> str:
             f'<b>{e.pct_off_high:.0%}</b>'
             f'<span class="csub">{e.pct_from_dma50:+.1%} vs 50dma</span>',
         ])
+        # None for anything a name without a spread does not have: it cannot be
+        # ranked on a premium it was never quoted.
+        keys.append([
+            e.symbol, order.get(e.signal, 9),
+            e.dte if e.has_spread else None,
+            e.collateral if e.has_spread else None,
+            e.credit_dollars if e.has_spread else None,
+            e.roc if e.has_spread else None,
+            e.cushion if e.has_spread else None,
+            e.earnings_date or None,            # ISO dates sort as text
+            e.pct_off_high,
+        ])
     table = _table(["ticker", "signal", "spread", "collateral", "premium",
-                    "return", "cushion", "earnings", "off high"], rows)
+                    "return", "cushion", "earnings", "off high"],
+                   rows, keys, name="watch")
     return f'<div class="wpills">{pills}</div>{bench_note}{banner}{table}'
 
 
@@ -1296,6 +1414,59 @@ nobody is watching. Closing only, paper only, never on a stale mark.</li>
     box.hidden=false;
     history.replaceState(null,'',location.pathname);
   }}
+
+  // Client-side sort. The page is a static file behind nginx -- there is no
+  // server to ask for a different ordering, and no need for one: the keys are
+  // already in the markup as data-s.
+  [].forEach.call(document.querySelectorAll('table.sortable'), function(tb){{
+    var body=tb.tBodies[0], ths=[].slice.call(tb.tHead.rows[0].cells);
+    var orig=[].slice.call(body.rows), key='', dir=1;
+    var bar=tb.closest('.scroll').previousElementSibling;
+    var sel=bar&&bar.querySelector('.sortsel'), flip=bar&&bar.querySelector('.sortdir');
+    var store='pcs-sort-'+(tb.dataset.name||'t');
+    function draw(){{
+      var i=key===''?-1:+key;
+      if(i<0){{ orig.forEach(function(r){{ body.appendChild(r); }}); }}
+      else {{
+        var t=ths[i].dataset.t||'s';
+        orig.slice().sort(function(a,b){{
+          var x=a.cells[i].dataset.s, y=b.cells[i].dataset.s;
+          // A row with nothing in this column sinks either way round, so
+          // reversing never buries the rows you were reading.
+          if(x===undefined&&y===undefined) return 0;
+          if(x===undefined) return 1;
+          if(y===undefined) return -1;
+          if(t==='n'){{ return (parseFloat(x)-parseFloat(y))*dir; }}
+          return x.localeCompare(y)*dir;
+        }}).forEach(function(r){{ body.appendChild(r); }});
+      }}
+      ths.forEach(function(h,j){{
+        h.setAttribute('aria-sort', j===i ? (dir>0?'ascending':'descending') : 'none');
+      }});
+      if(sel) sel.value=key;
+      if(flip){{ flip.disabled=(i<0); flip.textContent=(i<0||dir>0)?'\u2193':'\u2191'; }}
+      try{{ localStorage.setItem(store, key===''?'':key+':'+dir); }}catch(e){{}}
+    }}
+    function pick(i){{
+      if(String(i)===key){{ dir=-dir; }}
+      else {{ key=String(i); dir=+(ths[i].dataset.d||1); }}
+      draw();
+    }}
+    ths.forEach(function(h,j){{
+      h.addEventListener('click', function(){{ pick(j); }});
+      h.addEventListener('keydown', function(e){{
+        if(e.key==='Enter'||e.key===' '){{ e.preventDefault(); pick(j); }} }});
+    }});
+    if(sel) sel.addEventListener('change', function(){{
+      key=sel.value; if(key!=='') dir=+(ths[+key].dataset.d||1); draw(); }});
+    if(flip) flip.addEventListener('click', function(){{
+      if(key!==''){{ dir=-dir; draw(); }} }});
+    try{{
+      var was=localStorage.getItem(store);
+      if(was){{ var q=was.split(':'); key=q[0]; dir=+q[1]||1; }}
+    }}catch(e){{}}
+    draw();
+  }});
 
   // Settings popover. Click-outside and Escape close it; without those a
   // panel that overlays the alert row is worse than no panel.

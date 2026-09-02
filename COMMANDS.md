@@ -441,6 +441,20 @@ cannot rewrite the file it checks against. `/var/lib/pcs` is the service's own
 state — the signing key and any setting changed from the page. Neither is
 inside `/opt/pcs`, which is rsynced with `--delete` on every redeploy.
 
+### Sorting the watchlist
+
+The Watchlist table sorts on any column: click a header, or use the **Sort by**
+select above it. Clicking the same column again reverses it, and the choice is
+remembered per browser.
+
+The first click shows the useful end first — biggest premium, widest cushion,
+best estimated win, but *cheapest* collateral and READY-first for signal. A
+name with no sizeable spread has no premium to be ranked on, so it carries no
+key and sinks to the bottom whichever way round the sort goes.
+
+The select is not a nicety: at phone widths the table collapses to a stack of
+cards and `thead` is `display:none`, so there is no header left to click.
+
 ### Changing the position cap from the dashboard
 
 `Max open positions` is editable behind the gear icon in the page header, next
