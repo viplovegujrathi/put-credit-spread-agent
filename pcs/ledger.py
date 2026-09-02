@@ -84,9 +84,14 @@ class Position:
 
     @property
     def open_fees(self) -> float:
-        """Fees taken out at fill. Not stored: `credit_dollars` is banked net of
-        them (paper_broker), so the difference from the quoted credit IS the
-        fee. `fees_paid` only ever holds the CLOSING fee."""
+        """Fees taken out at fill, recovered from the two credits.
+
+        `fees_paid` also holds this figure -- but only while the position is
+        open. `close_position` adds the closing fee to the same field, so after
+        a close `fees_paid` is open+close and no longer answers this question.
+        `credit_dollars` is banked net of the fill fee (paper_broker), so its
+        distance from the quoted credit is the opening fee for the whole life
+        of the position."""
         return round(self.gross_credit - self.credit_dollars, 2)
 
     @property
@@ -213,6 +218,17 @@ class Ledger:
         return round(sum(p.credit_dollars for p in self.open_positions), 2)
 
     @property
+    def gross_premium(self) -> float:
+        """What the open spreads sold for, before fill fees.
+
+        `premium_collected` is the net figure and is the one that explains
+        cash. This is the one `collateral_held` is netted against -- collateral
+        is width less the QUOTED credit -- so a page that says "pay out X, keep
+        the premium, lose the difference" has to use this or it misses by the
+        fees and reads as an arithmetic error."""
+        return round(sum(p.gross_credit for p in self.open_positions), 2)
+
+    @property
     def fees_on_open(self) -> float:
         return round(sum(p.open_fees for p in self.open_positions), 2)
 
@@ -228,10 +244,21 @@ class Ledger:
         return round(self.cash - self.capital_at_risk, 2)
 
     @property
+    def cost_to_close(self) -> float:
+        """What buying the whole open book back would cost at current marks.
+
+        The bridge between premium and profit. The credit is cash in hand and
+        this is what is still owed against it; the difference is the only P&L
+        that exists. `net_liq` computed it inline and threw it away, which left
+        the page showing $1,046 of premium beside $53 of profit with nothing in
+        between to explain the gap."""
+        return round(sum(p.mark_cost_to_close * 100 * p.contracts
+                         for p in self.open_positions), 2)
+
+    @property
     def net_liq(self) -> float:
         """Cash minus the cost to close every open spread at its current mark."""
-        liab = sum(p.mark_cost_to_close * 100 * p.contracts for p in self.open_positions)
-        return round(self.cash - liab, 2)
+        return round(self.cash - self.cost_to_close, 2)
 
     @property
     def realized_pl(self) -> float:

@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 365 tests, ruff clean.
+- 372 tests, ruff clean.
 
 ---
 
@@ -822,3 +822,51 @@ The banner now prints the age beside the timestamp. "Refreshed 2026-08-31
 23:12:10" makes the reader do the subtraction, and that subtraction is the
 entire question the timestamp was there to answer.
 
+
+## 35. Two premium figures, 48 cents apart, and which one each identity uses
+
+`collateral` is set at fill as `width x 100 - fill x 100`, i.e. width less the
+**quoted** credit. `credit_dollars` is banked **net of the fill fee**. So the
+open book carries two premium totals that differ by exactly the fees:
+
+| property | basis | the identity it belongs to |
+|---|---|---|
+| `Ledger.premium_collected` | net of fees | `starting_cash + premium = cash` |
+| `Ledger.gross_premium` | as quoted | `capital_at_risk - gross = collateral_held` |
+
+Using the wrong one is invisible in code and glaring on a page. The dashboard
+said "pay out $3,000, keep the $1,146.52 of premium, so the real loss is
+$1,853.00" -- three correct numbers in a sentence that is wrong by $0.48,
+because collateral nets the gross credit and `premium_collected` does not.
+A near-miss like that is worse than an obviously wrong number: it reads as
+sloppiness across the whole page.
+
+`gross_premium` exists so the risk identity has a term that closes exactly. The
+fee difference is then stated once, in the one sentence where both figures
+appear, instead of being left for the reader to discover.
+
+## 36. A dollar amount with a label is not an explanation
+
+Three rounds of "the numbers are messy" were answered with better labels, more
+subtitles, and a reconciling card ladder. The arithmetic was right after the
+first round. It stayed unreadable, for two reasons that no amount of labelling
+fixes:
+
+- **The bridge number was never on the page.** `net_liq` computed the cost to
+  close the whole book inline and threw it away, so $1,046 of premium sat next
+  to $53 of profit with nothing in between. `Ledger.cost_to_close` is now a
+  property, used by `net_liq` and shown as its own card.
+- **Two unrelated cards collided on the same value.** On a $3,000 account with
+  $3,000 of width open, premium taken in and cash-less-the-hold are both
+  $1,046.40 -- a coincidence that reads exactly like a copy-paste bug. Each
+  card's subtitle now prints its own subtraction, so the pair reads as two
+  derivations rather than one number repeated.
+
+The fix that actually landed was prose: three sentences above the cards saying
+the arithmetic out loud, in the order it happens, so every figure below has
+already been met in a sentence. Card labels are the plain-English name now
+("account value", "worst case"), with the broker's term as the subtitle rather
+than the headline.
+
+Every subtraction the page states is pinned by
+`test_every_subtraction_on_the_page_actually_comes_out`.

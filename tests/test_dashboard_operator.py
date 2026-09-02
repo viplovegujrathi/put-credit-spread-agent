@@ -242,7 +242,7 @@ def test_the_worst_case_is_stated_as_a_percentage_of_the_account(
     number and only one of them is read as a warning."""
     led.positions = [_pos(), _pos("TS2")]
     doc = _render(led, settings, open_market, tmp_path, monkeypatch)
-    assert "of net liq" in doc
+    assert "of the account" in doc
     assert "went to max loss" in doc
 
 
@@ -365,8 +365,9 @@ def test_the_cards_reconcile_start_plus_premium_into_cash(money):
     led, doc = money
     """The complaint that started this: nine cards, three different bases, and
     no way to get from one to the next. Cash IS start plus premium."""
-    assert "premium collected" in doc
-    assert f"${led.starting_cash:,.0f} start + premium" in doc
+    assert "premium taken in" in doc
+    assert (f"${led.starting_cash:,.2f} you put in + the "
+            f"${led.premium_collected:,.2f} premium taken in") in doc
     assert round(led.starting_cash + led.premium_collected, 2) == led.cash
 
 
@@ -376,15 +377,20 @@ def test_both_risk_numbers_name_their_own_basis(money):
     width. Subtracting one from cash does not give the other, so each card has
     to say which it is or the page reads as an arithmetic error."""
     doc = " ".join(doc.split())
-    assert "most this book can lose" in doc
-    assert f"cash less the full ${led.capital_at_risk:,.0f} width" in doc
+    # Each card prints its own subtraction, so the pair reads as two
+    # derivations rather than as one number contradicting itself.
+    assert (f"the ${led.capital_at_risk:,.2f} you would pay out less the "
+            f"${led.gross_premium:,.2f} they sold for") in doc
+    assert (f"${led.cash:,.2f} cash less the "
+            f"${led.capital_at_risk:,.2f} tied up") in doc
 
 
 def test_the_split_is_dropped_when_there_is_nothing_booked(money):
     led, doc = money
     """open +$140 next to a +$139.52 headline is two numbers for one fact."""
     cards = doc.split('<div class="cards">')[1].split("<h2>")[0]
-    assert "on starting cash" in cards
+    assert f"on the ${led.starting_cash:,.0f} you put in" in cards
+    assert f"${led.gross_premium:,.2f} they sold for" in cards
     assert "booked" not in cards and "open +" not in cards
 
 
@@ -412,3 +418,73 @@ def test_no_table_cell_borrows_the_page_subtitle_class(money):
     Services" and "$322nat" -- inline, with the margin doing nothing."""
     body = doc.split('class="tabs"')[1]
     assert 'class="sub"' not in body
+
+
+# --- the bridge from premium to profit --------------------------------------
+def test_the_cost_to_close_the_whole_book_is_on_the_page(money):
+    """The gap that made the cards unreadable: $1,046 of premium beside $53 of
+    profit, and the number that separates them computed inside `net_liq` and
+    never shown. Premium less cost-to-close IS the unrealised P&L."""
+    led, doc = money
+    assert "cost to close now" in doc
+    assert f"${led.cost_to_close:,.2f}" in doc
+    assert round(led.premium_collected - led.cost_to_close, 2) == led.unrealized_pl
+
+
+def test_the_page_opens_with_the_arithmetic_in_words(money):
+    """Numbers do not explain themselves. Anyone should be able to read the
+    account without knowing what "net liquidation" means."""
+    led, doc = money
+    story = doc.split('class="story"')[1].split("</div>")[0]
+    assert doc.index('class="story"') < doc.index('class="cards"')
+    for figure in (f"${led.starting_cash:,.2f}", f"${led.premium_collected:,.2f}",
+                   f"${led.cash:,.2f}", f"${led.cost_to_close:,.2f}",
+                   f"${led.net_liq:,.2f}", f"${led.collateral_held:,.2f}"):
+        assert figure in story, figure
+
+
+def test_the_story_explains_why_the_two_risk_numbers_differ(money):
+    """`worst case $1,953` and `$3,000 held` are both true and look like a
+    contradiction. The width less the premium already in hand is the whole
+    explanation, and it is the one sentence the page never said."""
+    led, doc = money
+    story = " ".join(doc.split()).split('class="story"')[1].split("<h2>")[0]
+    assert f"${led.capital_at_risk:,.2f}" in story
+    assert f"${led.collateral_held:,.2f}" in story
+    assert "they sold for" in story
+
+
+def test_an_empty_book_does_not_narrate_four_sentences_about_nothing(
+        led, settings, shut_market, tmp_path, monkeypatch):
+    doc = _render(led, settings, shut_market, tmp_path, monkeypatch)
+    story = doc.split('class="story"')[1].split("</div>")[0]
+    assert "Nothing is open" in story
+    assert "Worst case" not in story
+
+
+def test_a_losing_account_reads_as_down_not_as_up_a_negative(
+        led, settings, shut_market, tmp_path, monkeypatch):
+    """"up $-53.15" is how a number reads when the sign is doing the work of a
+    word. The story says the word."""
+    p = _pos(credit=1.0, cost_to_close=3.0)          # bought back for more
+    led.positions = [p]
+    led.cash = round(led.starting_cash + led.premium_collected, 2)
+    doc = _render(led, settings, shut_market, tmp_path, monkeypatch)
+    story = doc.split('class="story"')[1].split("<h2>")[0]
+    assert "down $" in story and "up $-" not in story
+
+
+def test_every_subtraction_on_the_page_actually_comes_out(money):
+    """The complaint in one test. Collateral is netted against the QUOTED
+    credit, `premium_collected` is net of fill fees, and a page that says
+    "pay out $3,000, keep $1,146.52 of premium, lose $1,853.00" is wrong by
+    the $0.48 in between -- which is exactly the kind of near-miss that makes
+    a correct page unreadable."""
+    led, doc = money
+    assert round(led.starting_cash + led.premium_collected, 2) == led.cash
+    assert round(led.cash - led.cost_to_close, 2) == led.net_liq
+    assert round(led.capital_at_risk - led.gross_premium, 2) == led.collateral_held
+    assert round(led.cash - led.capital_at_risk, 2) == led.buying_power
+    assert round(led.gross_premium - led.premium_collected, 2) == led.fees_on_open
+    story = " ".join(doc.split()).split('class="story"')[1].split("<h2>")[0]
+    assert f"${led.fees_on_open:,.2f} of that premium went to fees" in story

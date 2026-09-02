@@ -163,3 +163,21 @@ def test_pct_of_max_credit_is_measured_on_the_credit_actually_banked(settings):
     assert p.gross_credit == 120.0
     assert p.open_pl == round(119.88 - 60.0, 2)
     assert p.pct_of_max_credit == round(p.open_pl / 119.88, 4)
+
+
+def test_cost_to_close_is_the_liability_net_liq_subtracts(settings, tmp_path):
+    """`net_liq` computed this inline and discarded it, so the page could say
+    what the account was worth but never what stood between the premium and
+    the profit. One property, used by both."""
+    led = Ledger.load(settings, path=tmp_path / "ledger.json")
+    led.cash = 4046.40
+    for sym, credit, debit in (("MRVL", 4.16, 3.61), ("META", 3.67, 3.10)):
+        p = _held(0.0)
+        p.symbol, p.credit_open = sym, credit
+        p.credit_dollars = round(credit * 100 - 0.12, 2)
+        p.mark_cost_to_close = debit
+        led.positions.append(p)
+    assert led.cost_to_close == round(
+        sum(p.mark_cost_to_close * 100 * p.contracts for p in led.open_positions), 2)
+    assert led.net_liq == round(led.cash - led.cost_to_close, 2)
+    assert round(led.premium_collected - led.cost_to_close, 2) == led.unrealized_pl

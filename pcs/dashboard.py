@@ -234,6 +234,19 @@ border-left:3px solid transparent}
 .cush.near{color:var(--warn)}
 .cush.tight{color:var(--warn)}
 .cush.breach{color:var(--neg)}
+/* The account in sentences, above the cards. Every card below is a noun the
+   reader has to translate -- "net liquidation", "collateral held", "capital at
+   risk" -- and three of them are dollar amounts differing only in which
+   liability they net out. Words first, then the figures. */
+.story{background:linear-gradient(180deg,var(--panel),var(--panel2));
+border:1px solid var(--line);border-radius:13px;padding:16px 18px;
+box-shadow:var(--sh);margin:0 0 14px;font-size:14.5px;line-height:1.7;
+color:var(--ink2)}
+.story p{margin:0 0 8px;max-width:92ch}
+.story p:last-child{margin:0}
+.story b{color:var(--ink);font-weight:670;font-variant-numeric:tabular-nums;
+white-space:nowrap}
+.story b.up{color:var(--pos)} .story b.down{color:var(--neg)}
 .ksub{font-size:11px;color:var(--dim);font-weight:500;margin-top:3px;
 letter-spacing:0;text-transform:none}
 .tag{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;
@@ -362,6 +375,7 @@ h1{font-size:16.5px} h2{margin:24px 0 10px}
 .logo{width:34px;height:34px} .brand{gap:10px} .brandtag{font-size:9.5px}
 .themer{width:31px;height:31px}
 .cards{grid-template-columns:repeat(auto-fit,minmax(144px,1fr));gap:9px}
+.story{padding:13px 14px;font-size:13.5px;line-height:1.65}
 .card{padding:12px 13px;border-radius:11px} .card .v{font-size:19px}
 .tabs{gap:0;margin:18px 0 14px}
 /* nowrap + overflow-x on .tabs means these must not shrink, or six tabs
@@ -742,6 +756,71 @@ def _heartbeat(led: Ledger, hb: health.Health, sess: SessionState,
                     f'<span class="{cls}">{_e(when)}</span>'
                     f'<span class="dim"> &middot; {tail}</span></span>')
     return f'<div class="hb">{"".join(bits)}</div>'
+
+
+def _amt(v: float) -> str:
+    return f"<b>${v:,.2f}</b>"
+
+
+def _updown(v: float) -> str:
+    """"up $53.15", not "+$53.15". The sign is punctuation; the word is not."""
+    return f'<b class="{"up" if v >= 0 else "down"}">' \
+           f'{"up" if v >= 0 else "down"} ${abs(v):,.2f}</b>'
+
+
+def _money_story(led: Ledger) -> str:
+    """The account in three sentences, above the cards.
+
+    The cards are correct and were still unreadable, because a dollar amount
+    with a label is not an explanation. On a $3,000 account two of them landed
+    on the same $1,046.40 by pure coincidence -- the premium taken in, and cash
+    less the width hold -- and the page looked like it was printing one number
+    twice under different names. Nothing on it said why $1,046 of premium sits
+    beside $53 of profit, because the number that separates them (what the book
+    would cost to buy back) was computed inside `net_liq` and never shown.
+
+    So: say the arithmetic out loud, in the order it happens. Every figure on
+    the cards below is one the reader has already met in a sentence.
+    """
+    n = len(led.open_positions)
+    noun = "spread" if n == 1 else "spreads"
+    closed = len(led.closed_positions)
+    booked = (f' {_updown(led.realized_pl)} booked on {closed} closed '
+              f'trade{"" if closed == 1 else "s"}.' if closed else "")
+
+    if not n:
+        return ('<div class="story"><p>Nothing is open. Cash is '
+                f'{_amt(led.cash)} and all of it is free to trade.'
+                f'{booked}</p></div>')
+
+    # 1. where the cash came from. 2. what it is actually worth. 3. the risk.
+    total_pl = round(led.realized_pl + led.unrealized_pl, 2)
+    risk_pct = (led.collateral_held / led.net_liq) if led.net_liq else 0.0
+    # Why two premium figures differ by pennies, said once, where they meet.
+    fees = led.fees_on_open
+    fee_note = (f" ${fees:,.2f} of that premium went to fees, so "
+                f"${led.premium_collected:,.2f} is what reached cash." if fees else "")
+    lines = [
+        f"You put in {_amt(led.starting_cash)}. The <b>{n}</b> open {noun} paid "
+        f"{_amt(led.premium_collected)} of premium up front, so cash is now "
+        f"{_amt(led.cash)}.",
+
+        f"Buying all {n} back today would cost {_amt(led.cost_to_close)}, so the "
+        f"account is worth {_amt(led.net_liq)} &mdash; {_updown(total_pl)} "
+        f"({led.total_return:+.2%}) on what you put in.{booked}",
+
+        # Netted against the GROSS premium, because that is what collateral is
+        # netted against. Using the banked figure here misses by the fill fees
+        # and puts a subtraction on the page that does not come out.
+        f"Worst case, all {n} finishing fully in the money: you would pay out "
+        f"{_amt(led.capital_at_risk)} and keep the {_amt(led.gross_premium)} "
+        f"they sold for, so the real loss is {_amt(led.collateral_held)} "
+        f"&mdash; {risk_pct:.0%} of the account.{fee_note} That "
+        f"{_amt(led.capital_at_risk)} stays tied up until they close, leaving "
+        f"{_amt(led.buying_power)} of your {_amt(led.cash)} in cash free to "
+        f"open with.",
+    ]
+    return '<div class="story">' + "".join(f"<p>{ln}</p>" for ln in lines) + "</div>"
 
 
 def _positions_table(rows: list[Position], settings: Settings,
@@ -1243,42 +1322,55 @@ def render(led: Ledger, props: list[Proposal], settings: Settings,
     # "$1,953 at risk" and "65% of everything you have" are the same number and
     # only one of them is read as a warning.
     risk_pct = (led.collateral_held / led.net_liq) if led.net_liq else 0.0
-    # The cards read top-to-bottom as one arithmetic: start + premium = cash,
-    # cash carries collateral, what is left is free. Every card names its own
-    # basis, because the two risk numbers here are NOT the same number --
-    # collateral is net of the credit, the buying-power hold is the gross
-    # width -- and a reader who subtracts one from cash and gets the other
-    # card's value wrong has been misled by the layout, not by the maths.
+    # Card order follows the story above, so every figure here is one the
+    # reader has already met in a sentence. Labels are the plain-English name,
+    # never the broker term: "account value", not "net liquidation"; "worst
+    # case", not "collateral held". The two risk numbers stay separate on
+    # purpose -- collateral is net of the credit, the buying-power hold is the
+    # gross width -- and each subtitle prints its own subtraction so a reader
+    # who compares them sees two derivations rather than a contradiction.
     n_open = len(led.open_positions)
+    noun = "spread" if n_open == 1 else "spreads"
     fees = led.fees_on_open
-    fee_txt = f" &middot; after ${fees:,.2f} fees" if fees else ""
+    fee_txt = f" &middot; after ${fees:,.2f} of fees" if fees else ""
     total_pl = round(led.realized_pl + led.unrealized_pl, 2)
     cards = [
-        ("net liquidation", f"${led.net_liq:,.2f}"
-         '<div class="ksub">cash less the cost to close every spread</div>', ""),
-        ("premium collected", f"${led.premium_collected:,.2f}"
-         f'<div class="ksub">banked on {n_open} open spread(s){fee_txt}</div>', "c-info"),
-        ("cash", f"${led.cash:,.2f}"
-         f'<div class="ksub">${led.starting_cash:,.0f} start + premium</div>', ""),
-        ("collateral held", f"${led.collateral_held:,.2f}"
-         f'<div class="ksub">most this book can lose &middot; '
-         f'{risk_pct:.0%} of net liq</div>',
-         "c-neg" if risk_pct > 0.5 else "c-warn"),
-        ("free to open", f"${led.buying_power:,.2f}"
-         f'<div class="ksub">cash less the full ${led.capital_at_risk:,.0f} '
-         f'width &mdash; the conservative hold</div>', "c-info"),
+        ("account value", f"${led.net_liq:,.2f}"
+         '<div class="ksub">what it is worth if every spread closed right now '
+         '&middot; your broker calls this net liquidation</div>', ""),
         # The open/booked split is only worth the width once BOTH halves exist.
         # With nothing closed, "open +$140" restates a headline of +$139.52 and
         # rounds it differently on the way -- two numbers for one fact, and the
         # cheaper one wrong.
         ("total P&amp;L", _sign(total_pl, ",.2f")
          + f'<div class="ksub">'
-           f'{_sign(led.total_return * 100, ".2f", money=False)}% on starting cash'
+           f'{_sign(led.total_return * 100, ".2f", money=False)}% on the '
+           f'${led.starting_cash:,.0f} you put in'
            + (f' &middot; open {_sign(led.unrealized_pl, ",.2f")}'
               f' &middot; booked {_sign(led.realized_pl, ",.2f")}'
               if led.closed_positions else "")
            + "</div>",
          _pl_class(total_pl)),
+        ("cash", f"${led.cash:,.2f}"
+         f'<div class="ksub">${led.starting_cash:,.2f} you put in + the '
+         f'${led.premium_collected:,.2f} premium taken in</div>', ""),
+        ("premium taken in", f"${led.premium_collected:,.2f}"
+         f'<div class="ksub">on {n_open} open {noun} &mdash; yours to keep only '
+         f'if they expire worthless{fee_txt}</div>', "c-info"),
+        # The number that was missing. Without it the page showed $1,046 of
+        # premium beside $53 of profit and no way to get from one to the other.
+        ("cost to close now", f"${led.cost_to_close:,.2f}"
+         f'<div class="ksub">to buy all {n_open} back today &middot; the premium '
+         f'less this is the P&amp;L</div>', ""),
+        ("worst case", f"${led.collateral_held:,.2f}"
+         f'<div class="ksub">the ${led.capital_at_risk:,.2f} you would pay out '
+         f'less the ${led.gross_premium:,.2f} they sold for &middot; '
+         f'{risk_pct:.0%} of the account</div>',
+         "c-neg" if risk_pct > 0.5 else "c-warn"),
+        ("free to open", f"${led.buying_power:,.2f}"
+         f'<div class="ksub">${led.cash:,.2f} cash less the '
+         f'${led.capital_at_risk:,.2f} tied up until these {noun} close</div>',
+         "c-info"),
         ("open positions", f"{n_open} / {settings.max_open_positions}"
          f'<div class="ksub">max {settings.max_positions_per_sector} per sector '
          f'&middot; change it under the gear</div>', ""),
@@ -1324,6 +1416,7 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 <section class="panel" id="p-now">
 <div class="saved" id="saved" hidden></div>
 {_alerts_panel(alerts)}
+{_money_story(led)}
 <div class="cards">{card_html}</div>
 
 <h2>Open positions</h2>
