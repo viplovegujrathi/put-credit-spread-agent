@@ -335,3 +335,70 @@ def test_signing_out_is_a_post_not_a_link(led, settings, open_market,
     doc = _render(led, settings, open_market, tmp_path, monkeypatch)
     assert '<form class="logoutf" method="post" action="/logout">' in doc
     assert '<a href="/logout"' not in doc
+
+
+@pytest.fixture
+def money(led, settings, shut_market, tmp_path, monkeypatch):
+    """A book shaped like the live one: premium banked net of fill fees, so
+    cash, net liq and unrealised P&L all have to agree."""
+    for sym, credit in (("MRVL", 4.16), ("META", 3.67)):
+        p = _pos(sym, credit=credit, cost_to_close=credit * 0.87)
+        p.credit_dollars = round(credit * 100 - 0.12, 2)      # fees at fill
+        led.positions.append(p)
+    led.cash = round(led.starting_cash + led.premium_collected, 2)
+    return led, _render(led, settings, shut_market, tmp_path, monkeypatch)
+
+
+
+# --- the money cards have to add up -----------------------------------------
+def test_the_cards_reconcile_start_plus_premium_into_cash(money):
+    led, doc = money
+    """The complaint that started this: nine cards, three different bases, and
+    no way to get from one to the next. Cash IS start plus premium."""
+    assert "premium collected" in doc
+    assert f"${led.starting_cash:,.0f} start + premium" in doc
+    assert round(led.starting_cash + led.premium_collected, 2) == led.cash
+
+
+def test_both_risk_numbers_name_their_own_basis(money):
+    led, doc = money
+    """Collateral is net of the credit; the buying-power hold is the gross
+    width. Subtracting one from cash does not give the other, so each card has
+    to say which it is or the page reads as an arithmetic error."""
+    doc = " ".join(doc.split())
+    assert "most this book can lose" in doc
+    assert f"cash less the full ${led.capital_at_risk:,.0f} width" in doc
+
+
+def test_the_split_is_dropped_when_there_is_nothing_booked(money):
+    led, doc = money
+    """open +$140 next to a +$139.52 headline is two numbers for one fact."""
+    cards = doc.split('<div class="cards">')[1].split("<h2>")[0]
+    assert "on starting cash" in cards
+    assert "booked" not in cards and "open +" not in cards
+
+
+# --- what moved -------------------------------------------------------------
+def test_portfolio_limits_is_not_in_the_positions_panel(money):
+    led, doc = money
+    now_panel = doc.split('id="p-now"')[1].split("</section>")[0]
+    assert "Portfolio limits" not in now_panel
+    assert "Portfolio limits" in doc.split('id="p-rules"')[1].split("</section>")[0]
+
+
+def test_the_position_cap_is_editable_from_the_header_not_the_prose(money):
+    led, doc = money
+    assert 'id="gearpop"' in doc and 'id="gearer"' in doc
+    head = doc.split('class="tabs"')[0]
+    assert 'action="/settings"' in head          # the form lives in the header
+    assert doc.count('action="/settings"') == 1  # and only there
+
+
+# --- the class collision that mashed the watchlist together -----------------
+def test_no_table_cell_borrows_the_page_subtitle_class(money):
+    led, doc = money
+    """`.sub` is the page subtitle: a span with no display rule and a 16px
+    bottom margin. Borrowed inside a cell it rendered "METACommunication
+    Services" and "$322nat" -- inline, with the margin doing nothing."""
+    body = doc.split('class="tabs"')[1]
+    assert 'class="sub"' not in body

@@ -443,11 +443,17 @@ inside `/opt/pcs`, which is rsynced with `--delete` on every redeploy.
 
 ### Changing the position cap from the dashboard
 
-`Max open positions` is editable on the Positions tab. Saving posts to the
+`Max open positions` is editable behind the gear icon in the page header, next
+to the light/dark toggle. Saving posts to the
 login service, which writes `/var/lib/pcs/overrides.json`; the agent applies it
 on its **next run** — no restart and no redeploy. The page itself is a static
 file, so the number shown catches up when something re-renders it (the mark
 timer does that every 15 minutes while the market is open).
+
+The portfolio limits it belongs to are read-only prose and live under the
+**Rules** tab; the gear is where the one writable value sits, because a write
+control dropped into the middle of a paragraph is not where anyone looks for
+one.
 
 It is the only setting editable there, and that is a boundary rather than a
 backlog: every login sees the same page and there is no admin tier, so anything

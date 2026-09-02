@@ -146,6 +146,24 @@ def record(kind: str, path=None, **stats) -> Run:
 # function only DETECTS; delivery is the caller's problem, and the dashboard
 # renders whatever comes back as a banner.
 
+def ledger_evidence(led, kind: str) -> str:
+    """The newest timestamp in the LEDGER proving a loop ran, or "".
+
+    The health record starts empty the day this module is deployed, so on a box
+    that has been trading for weeks `last("mark")` is None and the page would
+    say "never run" about a loop that has been running all along -- a critical
+    alert that is simply false, on the first view, which is exactly how a
+    reader learns to skip the panel. The ledger is the older witness: a
+    position cannot exist unless `propose` ran, and cannot carry `marked_at`
+    unless `mark` did.
+    """
+    if kind == "mark":
+        return max((p.marked_at for p in led.open_positions if p.marked_at), default="")
+    if kind == "propose":
+        return max((p.opened_at for p in led.positions if p.opened_at), default="")
+    return ""
+
+
 @dataclass
 class Alert:
     kind: str
@@ -209,10 +227,16 @@ def alerts(led, settings, health: Health | None = None, sess=None,
     if led.open_positions:
         trading_now = bool(sess and sess.is_open)
         if last_mark is None:
-            out.append(Alert(
-                "mark_never_ran", CRITICAL, "the mark loop has never run",
-                "every number on the page is the price at fill. Run ./run.py mark"))
-        else:
+            # No RECORD is not the same as never ran. Fall back to the ledger
+            # before crying wolf, and only then treat the marks as absent.
+            seen = ledger_evidence(led, "mark")
+            if seen:
+                last_mark = Run("mark", seen, detail="reconstructed from the ledger")
+            else:
+                out.append(Alert(
+                    "mark_never_ran", CRITICAL, "the mark loop has never run",
+                    "every number on the page is the price at fill. Run ./run.py mark"))
+        if last_mark is not None:
             age = _age_min(last_mark.at, now)
             if age is not None and trading_now and age > MARK_MISSING_AFTER_MIN:
                 out.append(Alert(

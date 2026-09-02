@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 340 tests, ruff clean.
+- 351 tests, ruff clean.
 
 ---
 
@@ -696,3 +696,71 @@ The allowlist is enforced on read as well as on write. Hand-editing
 `overrides.json` to add `paper_trading` does nothing: `load_overrides()` filters
 to `DASHBOARD_SETTABLE` before anything is applied. A validator on one side of a
 file is not a validator.
+
+---
+
+## 27. A page that shows the same money on two bases reads as broken arithmetic
+
+The dashboard showed `collateral at risk $1,953` and `available balance
+$1,046.40` side by side, off `cash $4,046.40`. Both were right. They are not
+the same base: collateral is the width **net** of the credit (`collateral_held`,
+what the book can actually lose), while the buying-power hold is the **gross**
+width (`capital_at_risk`, the conservative number the risk gate uses). A reader
+who subtracts the visible risk number from the visible cash number gets
+$2,093.40 and the card says $1,046.40, so the page looks like it cannot add up.
+
+The fix was not to pick one. Both are load-bearing -- loosening `buying_power`
+to `cash - collateral` would quietly relax the balance floor in `risk.py`, which
+is a risk change wearing a formatting change's clothes. The fix was to make
+every card state its own basis, and to order them so they read as one
+arithmetic: start + premium = cash, cash carries collateral, what is left is
+free.
+
+**`premium_collected` was the missing card.** It is the single number that
+explains why cash sits above starting cash, and it was the only one not shown.
+
+## 28. One class, one meaning -- `.sub` cost the watchlist its layout
+
+`.sub` is the **page subtitle**: `color:dim; font-size:13px; margin-bottom:16px`,
+applied to a `<div>` under the masthead. The watchlist table reused the same
+class on `<span>` elements for the second line inside a cell. A span is inline,
+so nothing wrapped and the bottom margin did nothing:
+
+    METACommunication Services    $322nat $270    47.5%on $678    3.2%66% est. win
+
+Every pair in the table ran together. The class name was descriptive enough to
+look correct at the call site and carried no `display` rule, so the bug was
+invisible in the source and obvious on screen. Cell sub-lines are now `.csub`,
+which owns `display:block`.
+
+## 29. An empty record is not evidence that nothing ran
+
+`pcs/health.py` shipped after the agent had been trading for weeks.
+`health.json` starts empty, so `last("mark")` was `None`, so the page opened
+with a CRITICAL **"the mark loop has never run"** -- above a table of four
+positions each stamped `marked 4h ago`. The alert was false, it was first, and
+it was red, which is precisely how a reader learns to skip the panel that will
+matter later.
+
+The health record is not the only witness. The **ledger is older than the
+record**: a position cannot exist unless `propose` ran, and cannot carry
+`marked_at` unless `mark` did. `health.ledger_evidence()` reads that, and the
+alert now fires only when both are silent. Falling back does not go quiet -- an
+old `marked_at` still trips `mark_stalled`.
+
+Generalisation: any monitor added to a system already in flight will have a
+cold-start window where absence of record looks like absence of event. Reconcile
+against the state the system was already keeping before claiming a fault.
+
+## 30. `credit_dollars` is banked; `credit_open` is quoted
+
+`paper_broker` stores `credit_dollars = gross - fees`, so cash and `net_liq`
+carry the fee. `Position.open_pl` recomputed from `credit_open * 100 *
+contracts` and did not, which put two totals on one page that disagreed by
+exactly the fill fees: unrealised said `+$53.63`, net liq minus starting cash
+said `+$53.15`. Small, and it scales with contract count.
+
+`open_pl` and `pct_of_max_credit` now both work off `credit_dollars`, which also
+makes unrealised consistent with `realized_pl` (already net of both open and
+close fees) and means the take-profit rule fires on money the account keeps.
+

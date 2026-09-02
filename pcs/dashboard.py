@@ -102,6 +102,13 @@ h2{font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim
 margin:30px 0 12px;font-weight:700}
 .sub{color:var(--dim);font-size:13px;margin-bottom:16px}
 .sub b{color:var(--ink2);font-weight:650}
+/* The second line inside a table cell. This used to borrow `.sub`, which is
+   the PAGE subtitle: a span with no display rule and a 16px bottom margin.
+   Inline, it ran every pair together -- "METACommunication Services",
+   "$322nat", "3.2%66% est. win" -- and the margin did nothing. One class, one
+   meaning. */
+.csub{display:block;margin-top:3px;font-size:11.5px;line-height:1.35;
+color:var(--dim);font-weight:500;letter-spacing:.01em}
 .banner{background:linear-gradient(92deg,var(--warnbg),transparent 78%);
 border:1px solid var(--warnln);border-left:3px solid var(--warn);
 padding:11px 15px;border-radius:4px 10px 10px 4px;margin:16px 0;color:var(--ink2);
@@ -153,6 +160,17 @@ border:1px solid var(--accln);background:var(--accbg);color:var(--accent);
 font:inherit;font-weight:650}
 .setf button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
 .setnote{font-size:11.5px;color:var(--dim)}
+.gearwrap{position:relative;flex:none}
+.gearpop{position:absolute;right:0;top:42px;z-index:40;width:272px;padding:14px;
+border-radius:14px;border:1px solid var(--line);background:var(--panel);
+box-shadow:0 18px 44px rgba(15,23,42,.20)}
+.gearttl{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+color:var(--dim);margin-bottom:10px}
+.gearpop .setf{flex-direction:column;align-items:stretch;gap:7px;margin:0}
+.gearpop .setf input[type=number]{width:100%}
+.gearpop .setf button{width:100%;padding:7px 13px}
+.gearfoot{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);
+font-size:11px;line-height:1.5;color:var(--dim)}
 .logoutf{flex:none;margin-left:8px}
 .logoutf button{appearance:none;cursor:pointer;height:34px;padding:0 13px;
 border-radius:10px;border:1px solid var(--line);background:var(--panel);
@@ -540,6 +558,27 @@ def _max_positions_control(settings: Settings) -> str:
         f"</form>")
 
 
+def _settings_menu(settings: Settings) -> str:
+    """The one setting editable from the page, behind the gear in the header.
+
+    It used to sit inside the Portfolio limits list -- a write control dropped
+    into the middle of a paragraph of read-only prose, where nobody looks for
+    one. Settings go where settings go.
+    """
+    return ('<div class="gearwrap">'
+            '<button class="themer gearer" id="gearer" type="button" '
+            'aria-haspopup="dialog" aria-expanded="false" aria-controls="gearpop" '
+            'aria-label="Settings" title="Settings">&#9881;</button>'
+            '<div class="gearpop" id="gearpop" hidden role="dialog" '
+            'aria-label="Dashboard settings">'
+            '<div class="gearttl">Settings</div>'
+            f'{_max_positions_control(settings)}'
+            '<div class="gearfoot">Every login sees this page and can change '
+            'this. Nothing reachable here can arm trading or waive the '
+            'per-trade approval gate.</div>'
+            "</div></div>")
+
+
 def _logout_button() -> str:
     """POST, not a link. A GET logout is triggerable from any page that can
     embed an image, and browsers prefetch links."""
@@ -573,10 +612,18 @@ def _heartbeat(led: Ledger, hb: health.Health, sess: SessionState) -> str:
     for kind, label in (("mark", "marks"), ("propose", "propose"), ("watch", "watch")):
         run = hb.last(kind)
         n = hb.runs_today(kind)
+        from_ledger = False
         if run is None:
-            bits.append(f'<span class="hb-item"><b>{label}</b> '
-                        f'<span class="hb-bad">never run</span></span>')
-            continue
+            # The record starts empty on the day this shipped. The ledger is
+            # older than the record and already knows: saying "never run" over
+            # four positions that only propose could have created, each marked
+            # four hours ago, makes the whole line unreadable.
+            seen = health.ledger_evidence(led, kind)
+            if not seen:
+                bits.append(f'<span class="hb-item"><b>{label}</b> '
+                            f'<span class="hb-bad">never run</span></span>')
+                continue
+            run, from_ledger = health.Run(kind, seen), True
         age = run.when and (dt.datetime.now() - run.when).total_seconds() / 60
         if age is None:
             when = run.at
@@ -589,9 +636,10 @@ def _heartbeat(led: Ledger, hb: health.Health, sess: SessionState) -> str:
         bad = (kind == "mark" and sess.is_open and led.open_positions
                and age is not None and age > health.MARK_MISSING_AFTER_MIN)
         cls = "hb-bad" if bad else "hb-ok"
+        tail = ("from the ledger" if from_ledger else f"{n} today")
         bits.append(f'<span class="hb-item"><b>{label}</b> '
                     f'<span class="{cls}">{_e(when)}</span>'
-                    f'<span class="dim"> &middot; {n} today</span></span>')
+                    f'<span class="dim"> &middot; {tail}</span></span>')
     return f'<div class="hb">{"".join(bits)}</div>'
 
 
@@ -871,31 +919,39 @@ def _watchlist_panel() -> str:
                f'{_e(e.signal.replace("_", " "))}</span>'
                + (f'<span class="why">{_e(why)}</span>' if why else ""))
         if e.has_spread:
-            spread = f"{e.short_strike:g}/{e.long_strike:g}p"
+            # Collateral is what the account would actually have to set aside
+            # to take this, and it was the one number a reader had to reverse
+            # out of the rate column. It is the cost of the trade; it gets a
+            # column of its own.
+            coll = (f'<b>${e.collateral:,.0f}</b>'
+                    f'<span class="csub">max loss</span>')
+            spread = (f'<b>{e.short_strike:g}/{e.long_strike:g}p</b>'
+                      f'<span class="csub">{_e(e.expiration)} &middot; {e.dte}d</span>')
             prem = (f'<b>${e.credit_dollars:,.0f}</b>'
-                    f'<span class="sub">nat ${e.credit_nat_dollars:,.0f}</span>')
-            rate = f'<b>{e.roc:.1%}</b><span class="sub">on ${e.collateral:,.0f}</span>'
+                    f'<span class="csub">nat ${e.credit_nat_dollars:,.0f}</span>')
+            rate = (f'<b>{e.roc:.1%}</b>'
+                    f'<span class="csub">on collateral</span>')
             # Cushion is how far out of the money it is; pop_est is the model's
             # odds of keeping the whole credit. Both were computed; only one was
             # shown, and the one shown says nothing about likelihood.
             cush = (f'<b>{e.cushion:.1%}</b>'
-                    + (f'<span class="sub">{e.pop_est:.0%} est. win</span>'
+                    + (f'<span class="csub">{e.pop_est:.0%} est. win</span>'
                        if e.pop_est is not None else
-                       '<span class="sub">no POP estimate</span>'))
-            exp = _expiry_cell(e.expiration, e.dte)
+                       '<span class="csub">no POP estimate</span>'))
         else:
-            spread = prem = rate = cush = exp = '<span class="sub">&mdash;</span>'
+            coll = spread = prem = rate = cush = '<span class="csub">&mdash;</span>'
         # "EARNINGS" alone is unanswerable: tomorrow and in three weeks are the
         # difference between waiting and dropping the name for this cycle.
         earn = (f'<span class="exp">{_e(e.earnings_date)}</span>' if e.earnings_date
-                else '<span class="sub">unknown</span>')
+                else '<span class="csub">unknown</span>')
         rows.append([
-            f'<b>{_e(e.symbol)}</b><span class="sub">{_e(e.sector)}</span>',
-            sig, spread, exp, prem, rate, cush, earn,
-            f'{e.pct_off_high:.0%}<span class="sub">{e.pct_from_dma50:+.1%} vs 50dma</span>',
+            f'<b>{_e(e.symbol)}</b><span class="csub">{_e(e.sector)}</span>',
+            sig, spread, coll, prem, rate, cush, earn,
+            f'<b>{e.pct_off_high:.0%}</b>'
+            f'<span class="csub">{e.pct_from_dma50:+.1%} vs 50dma</span>',
         ])
-    table = _table(["ticker", "signal", "strikes", "expiry", "premium", "rate",
-                    "cushion", "earnings", "off high"], rows)
+    table = _table(["ticker", "signal", "spread", "collateral", "premium",
+                    "return", "cushion", "earnings", "off high"], rows)
     return f'<div class="wpills">{pills}</div>{bench_note}{banner}{table}'
 
 
@@ -1044,24 +1100,45 @@ def render(led: Ledger, props: list[Proposal], settings: Settings,
     # "$1,953 at risk" and "65% of everything you have" are the same number and
     # only one of them is read as a warning.
     risk_pct = (led.collateral_held / led.net_liq) if led.net_liq else 0.0
-    # Return on collateral deployed, which is the base a defined-risk premium
-    # seller actually earns on. Total return on starting cash renders $0.24 of
-    # fees as -0.01% in red, which is noise wearing the colour of a loss.
-    roc = (led.realized_pl / led.starting_cash) if led.starting_cash else 0.0
+    # The cards read top-to-bottom as one arithmetic: start + premium = cash,
+    # cash carries collateral, what is left is free. Every card names its own
+    # basis, because the two risk numbers here are NOT the same number --
+    # collateral is net of the credit, the buying-power hold is the gross
+    # width -- and a reader who subtracts one from cash and gets the other
+    # card's value wrong has been misled by the layout, not by the maths.
+    n_open = len(led.open_positions)
+    fees = led.fees_on_open
+    fee_txt = f" &middot; after ${fees:,.2f} fees" if fees else ""
+    total_pl = round(led.realized_pl + led.unrealized_pl, 2)
     cards = [
-        ("net liquidation", f"${led.net_liq:,.2f}", ""),
-        ("cash", f"${led.cash:,.2f}", ""),
-        ("collateral at risk", f"${led.collateral_held:,.0f}"
-         f'<div class="ksub">{risk_pct:.0%} of net liq</div>',
+        ("net liquidation", f"${led.net_liq:,.2f}"
+         '<div class="ksub">cash less the cost to close every spread</div>', ""),
+        ("premium collected", f"${led.premium_collected:,.2f}"
+         f'<div class="ksub">banked on {n_open} open spread(s){fee_txt}</div>', "c-info"),
+        ("cash", f"${led.cash:,.2f}"
+         f'<div class="ksub">${led.starting_cash:,.0f} start + premium</div>', ""),
+        ("collateral held", f"${led.collateral_held:,.2f}"
+         f'<div class="ksub">most this book can lose &middot; '
+         f'{risk_pct:.0%} of net liq</div>',
          "c-neg" if risk_pct > 0.5 else "c-warn"),
-        ("available balance", f"${led.buying_power:,.2f}", "c-info"),
-        ("realized P&amp;L", _sign(led.realized_pl, ",.2f")
-         + f'<div class="ksub">{roc:+.1%} on starting cash</div>',
-         _pl_class(led.realized_pl)),
-        ("unrealized P&amp;L", _sign(led.unrealized_pl, ",.2f"), _pl_class(led.unrealized_pl)),
-        ("total return", _sign(led.total_return * 100, ".2f", money=False) + "%",
-         _pl_class(led.total_return)),
-        ("open positions", f"{len(led.open_positions)} / {settings.max_open_positions}", ""),
+        ("free to open", f"${led.buying_power:,.2f}"
+         f'<div class="ksub">cash less the full ${led.capital_at_risk:,.0f} '
+         f'width &mdash; the conservative hold</div>', "c-info"),
+        # The open/booked split is only worth the width once BOTH halves exist.
+        # With nothing closed, "open +$140" restates a headline of +$139.52 and
+        # rounds it differently on the way -- two numbers for one fact, and the
+        # cheaper one wrong.
+        ("total P&amp;L", _sign(total_pl, ",.2f")
+         + f'<div class="ksub">'
+           f'{_sign(led.total_return * 100, ".2f", money=False)}% on starting cash'
+           + (f' &middot; open {_sign(led.unrealized_pl, ",.2f")}'
+              f' &middot; booked {_sign(led.realized_pl, ",.2f")}'
+              if led.closed_positions else "")
+           + "</div>",
+         _pl_class(total_pl)),
+        ("open positions", f"{n_open} / {settings.max_open_positions}"
+         f'<div class="ksub">max {settings.max_positions_per_sector} per sector '
+         f'&middot; change it under the gear</div>', ""),
         ("next expiry", _next_expiry(led.open_positions), "c-info"),
     ]
     card_html = "".join(f'<div class="card {c}"><div class="k">{k}</div>'
@@ -1082,7 +1159,7 @@ if(t)document.documentElement.setAttribute('data-theme',t);}}catch(e){{}}</scrip
 </div></div>
 <button class="themer" id="themer" type="button" aria-label="Switch between the light
 and dark palette" title="Light / dark">&#9681;</button>
-{_logout_button()}</div>
+{_settings_menu(settings)}{_logout_button()}</div>
 <div class="sub">{_e(settings.account_label)} &middot; mode <b>{_e(led.mode)}</b> &middot;
 opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H:%M}</div>
 <div class="banner">{_e(sess.banner)}</div>
@@ -1105,26 +1182,6 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 <div class="saved" id="saved" hidden></div>
 {_alerts_panel(alerts)}
 <div class="cards">{card_html}</div>
-
-<h2>Portfolio limits</h2>
-<div class="rules"><ul>
-<li>Collateral deployed: <b>${led.collateral_held:,.0f}</b> of
-${settings.max_total_collateral:,.0f} cap ({used_pct:.0%} used)</li>
-<li>Open positions: <b>{len(led.open_positions)}</b> of {settings.max_open_positions}
-&middot; max {settings.max_positions_per_sector} per sector &middot; currently: {_e(sectors)}
-{_max_positions_control(settings)}</li>
-<li>Worst case: if every open spread went to max loss the account would lose
-<b>${led.collateral_held:,.0f}</b>, which is <b>{risk_pct:.0%}</b> of a
-${led.net_liq:,.0f} net liq, across {len(led.open_positions)} position(s) in
-{len(led.sector_counts())} GICS sector(s). The sector cap counts labels, not
-correlation &mdash; four large-cap tech names in two sectors pass it and still
-move together on one bad index day.</li>
-<li>Available balance: <b>${led.buying_power:,.2f}</b> (cash ${led.cash:,.2f} less
-${led.capital_at_risk:,.0f} of capital at risk). Nothing opens that needs more free
-balance than this &mdash; the account can always pay its own max loss.</li>
-<li>Per trade: collateral &le; ${eff.max_collateral_per_trade:,.0f}, credit &ge;
-${eff.min_credit_per_trade:,.0f}{max_credit_txt}{dev_flag}</li>
-</ul></div>
 
 <h2>Open positions</h2>
 {_positions_table(led.open_positions, settings, sess)}
@@ -1159,6 +1216,26 @@ Trades it can only report on &mdash; and only once there are enough of them.</p>
 </section>
 
 <section class="panel" id="p-rules" hidden>
+<h2>Portfolio limits</h2>
+<div class="rules"><ul>
+<li>Collateral deployed: <b>${led.collateral_held:,.0f}</b> of
+${settings.max_total_collateral:,.0f} cap ({used_pct:.0%} used)</li>
+<li>Open positions: <b>{len(led.open_positions)}</b> of {settings.max_open_positions}
+&middot; max {settings.max_positions_per_sector} per sector &middot; currently: {_e(sectors)}
+&middot; the cap is editable under the gear in the header</li>
+<li>Worst case: if every open spread went to max loss the account would lose
+<b>${led.collateral_held:,.0f}</b>, which is <b>{risk_pct:.0%}</b> of a
+${led.net_liq:,.0f} net liq, across {len(led.open_positions)} position(s) in
+{len(led.sector_counts())} GICS sector(s). The sector cap counts labels, not
+correlation &mdash; four large-cap tech names in two sectors pass it and still
+move together on one bad index day.</li>
+<li>Available balance: <b>${led.buying_power:,.2f}</b> (cash ${led.cash:,.2f} less
+${led.capital_at_risk:,.0f} of capital at risk). Nothing opens that needs more free
+balance than this &mdash; the account can always pay its own max loss.</li>
+<li>Per trade: collateral &le; ${eff.max_collateral_per_trade:,.0f}, credit &ge;
+${eff.min_credit_per_trade:,.0f}{max_credit_txt}{dev_flag}</li>
+</ul></div>
+
 <h2>Configuration</h2>
 {_deviations_panel(settings)}
 
@@ -1220,6 +1297,20 @@ nobody is watching. Closing only, paper only, never on a stale mark.</li>
     history.replaceState(null,'',location.pathname);
   }}
 
+  // Settings popover. Click-outside and Escape close it; without those a
+  // panel that overlays the alert row is worse than no panel.
+  var gb=document.getElementById('gearer'), gp=document.getElementById('gearpop');
+  if(gb&&gp){{
+    var setg=function(open){{
+      gp.hidden=!open; gb.setAttribute('aria-expanded', open?'true':'false');
+      if(open){{ var f=gp.querySelector('input[type=number]'); if(f) f.focus(); }}
+    }};
+    gb.addEventListener('click', function(e){{ e.stopPropagation(); setg(gp.hidden); }});
+    gp.addEventListener('click', function(e){{ e.stopPropagation(); }});
+    document.addEventListener('click', function(){{ if(!gp.hidden) setg(false); }});
+    document.addEventListener('keydown', function(e){{
+      if(e.key==='Escape'&&!gp.hidden){{ setg(false); gb.focus(); }} }});
+  }}
   var root=document.documentElement, btn=document.getElementById('themer');
   if(btn) btn.addEventListener('click', function(){{
     var dark = root.getAttribute('data-theme') !== 'dark';

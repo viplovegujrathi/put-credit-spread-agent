@@ -78,14 +78,34 @@ class Position:
         return (dt.date.fromisoformat(self.expiration) - dt.date.today()).days
 
     @property
+    def gross_credit(self) -> float:
+        """Credit before fees -- the number the option chain quoted."""
+        return round(self.credit_open * 100 * self.contracts, 2)
+
+    @property
+    def open_fees(self) -> float:
+        """Fees taken out at fill. Not stored: `credit_dollars` is banked net of
+        them (paper_broker), so the difference from the quoted credit IS the
+        fee. `fees_paid` only ever holds the CLOSING fee."""
+        return round(self.gross_credit - self.credit_dollars, 2)
+
+    @property
     def open_pl(self) -> float:
-        """Unrealized dollars: credit taken in minus what it costs to buy back."""
-        return round((self.credit_open - self.mark_cost_to_close) * 100 * self.contracts, 2)
+        """Unrealized dollars: credit banked minus what it costs to buy back.
+
+        Banked, not quoted. `credit_dollars` is what actually reached cash, so
+        this reconciles with `Ledger.net_liq` exactly. Using the gross quote
+        here instead used to overstate every open position by its fill fees,
+        which put two totals on the dashboard that did not agree: unrealized
+        P&L said one number and net liq minus starting cash said another.
+        """
+        return round(self.credit_dollars - self.mark_cost_to_close * 100 * self.contracts, 2)
 
     @property
     def pct_of_max_credit(self) -> float:
-        gross = self.credit_open * 100 * self.contracts
-        return round(self.open_pl / gross, 4) if gross else 0.0
+        """Fraction of the banked credit captured. Same basis as `open_pl`, so
+        the exit rules fire on money the account actually keeps."""
+        return round(self.open_pl / self.credit_dollars, 4) if self.credit_dollars else 0.0
 
     @property
     def breakeven(self) -> float:
@@ -185,6 +205,16 @@ class Ledger:
     @property
     def collateral_held(self) -> float:
         return round(sum(p.collateral for p in self.open_positions), 2)
+
+    @property
+    def premium_collected(self) -> float:
+        """Credit banked from the open book, net of fill fees. This is the one
+        number that explains why cash sits above starting cash."""
+        return round(sum(p.credit_dollars for p in self.open_positions), 2)
+
+    @property
+    def fees_on_open(self) -> float:
+        return round(sum(p.open_fees for p in self.open_positions), 2)
 
     @property
     def capital_at_risk(self) -> float:

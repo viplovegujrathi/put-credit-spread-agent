@@ -129,3 +129,37 @@ def test_cost_to_close_is_pessimistic(settings):
     debit = cost_to_close(chain, pos, settings)
     sq, lq = chain.at(97.0), chain.at(92.0)
     assert debit >= sq.mid - lq.mid          # never better than the mid
+
+
+# --- the two totals that used to disagree ------------------------------------
+def test_unrealized_pl_reconciles_with_net_liq(settings, tmp_path):
+    """The dashboard showed unrealised +$53.63 and a net liq implying +$53.15.
+    `credit_dollars` is banked net of fill fees; `open_pl` used to recompute
+    from the gross quote, so it overstated every position by its own fees."""
+    led = Ledger.load(settings, path=tmp_path / "l.json")
+    led.cash = led.starting_cash
+    for sym, credit in (("A", 4.16), ("B", 3.67), ("C", 1.47), ("D", 1.82)):
+        p = Position(id=sym, symbol=sym, sector="S", expiration="2099-01-01",
+                     short_strike=100.0, long_strike=95.0, width=5.0, contracts=1,
+                     credit_open=credit, credit_dollars=round(credit * 100 - 0.12, 2),
+                     collateral=500 - credit * 100, opened_at="", opened_spot=110.0)
+        p.mark_spot = 110.0
+        p.mark_cost_to_close = round(credit * 0.87, 2)
+        led.positions.append(p)
+        led.cash = round(led.cash + p.credit_dollars, 2)
+    assert led.fees_on_open == 0.48
+    assert led.cash == round(led.starting_cash + led.premium_collected, 2)
+    assert round(led.net_liq - led.starting_cash, 2) == led.unrealized_pl
+
+
+def test_pct_of_max_credit_is_measured_on_the_credit_actually_banked(settings):
+    """Same basis as open_pl, so the exit rules fire on money kept."""
+    p = Position(id="x", symbol="T", sector="S", expiration="2099-01-01",
+                 short_strike=97.0, long_strike=92.0, width=5.0, contracts=1,
+                 credit_open=1.20, credit_dollars=119.88, collateral=380,
+                 opened_at="", opened_spot=100.0, mark_spot=101.0,
+                 mark_cost_to_close=0.60)
+    assert p.open_fees == 0.12
+    assert p.gross_credit == 120.0
+    assert p.open_pl == round(119.88 - 60.0, 2)
+    assert p.pct_of_max_credit == round(p.open_pl / 119.88, 4)

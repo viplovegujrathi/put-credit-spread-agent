@@ -161,10 +161,40 @@ def test_a_position_with_no_spot_does_not_alert_as_breached(led, settings):
 
 # --- alert 4: the mark loop --------------------------------------------------
 def test_a_never_run_mark_loop_alerts_when_positions_exist(led, settings, open_market):
-    led.positions = [_pos()]
+    led.positions = [_pos(marked_min_ago=None)]          # no mark, ever
     a = [x for x in health.alerts(led, settings, health.Health(), open_market, NOW)
          if x.kind == "mark_never_ran"]
     assert a and "./run.py mark" in a[0].detail
+
+
+def test_an_empty_record_does_not_claim_never_run_when_the_ledger_says_otherwise(
+        led, settings, open_market):
+    """health.json starts empty the day this module is deployed. On a box that
+    has been marking for weeks that would put a CRITICAL falsehood at the top
+    of the page on the very first view, which is how a reader learns to skip
+    the panel. A position carrying `marked_at` is proof the loop ran."""
+    led.positions = [_pos(marked_min_ago=5)]
+    a = health.alerts(led, settings, health.Health(), open_market, NOW)
+    assert not [x for x in a if x.kind == "mark_never_ran"]
+    assert not [x for x in a if x.kind == "mark_stalled"]     # 5 min old, fine
+
+
+def test_the_ledger_fallback_still_reports_a_genuinely_stale_mark(
+        led, settings, open_market):
+    """Falling back must not become a way to go quiet: an old `marked_at` is
+    still an old mark."""
+    led.positions = [_pos(marked_min_ago=health.MARK_MISSING_AFTER_MIN + 30)]
+    a = [x for x in health.alerts(led, settings, health.Health(), open_market,
+                                  dt.datetime.now())
+         if x.kind == "mark_stalled"]
+    assert a and a[0].severity == health.CRITICAL
+
+
+def test_ledger_evidence_reads_propose_from_the_positions_themselves(led, settings):
+    """A position cannot exist unless propose ran."""
+    led.positions = [_pos()]
+    assert health.ledger_evidence(led, "propose")
+    assert health.ledger_evidence(led, "watch") == ""
 
 
 def test_an_empty_book_does_not_alert_about_marks(led, settings, open_market):
