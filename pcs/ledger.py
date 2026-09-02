@@ -239,8 +239,30 @@ class Ledger:
         return round(sum(p.width * 100 * p.contracts for p in self.open_positions), 2)
 
     @property
+    def free_cash(self) -> float:
+        """Cash less the collateral a broker locks -- the broker's own figure.
+
+        This is what a statement calls buying power: a defined-risk spread is
+        margined at its max loss, and the credit is already in cash. It is the
+        number to reconcile against the brokerage account.
+
+        It is NOT what this agent opens against -- see `buying_power`."""
+        return round(self.cash - self.collateral_held, 2)
+
+    @property
     def buying_power(self) -> float:
-        """Unencumbered cash: what is genuinely available to open against."""
+        """What the agent will open against: cash less the FULL width at risk.
+
+        Deliberately stricter than `free_cash`, and the difference is not
+        conservatism for its own sake. Under the broker's basis an account can
+        be filled until the sum of widths exceeds cash: open $400-collateral
+        spreads against $3,000 and the gate permits nine, $4,500 of width
+        against $3,900 of cash -- a correlated wipeout settles at -$600. Holding
+        the gross width caps it at seven and leaves +$200.
+
+        A book of beaten-down names in two sectors is exactly the tail where
+        every position lands at once, and a cash account has no margin line to
+        absorb it. `test_the_balance_can_never_be_driven_negative` pins this."""
         return round(self.cash - self.capital_at_risk, 2)
 
     @property

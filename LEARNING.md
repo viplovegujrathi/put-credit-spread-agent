@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 372 tests, ruff clean.
+- 377 tests, ruff clean.
 
 ---
 
@@ -870,3 +870,45 @@ than the headline.
 
 Every subtraction the page states is pinned by
 `test_every_subtraction_on_the_page_actually_comes_out`.
+
+## 37. Two buying powers, and why the strict one is not just caution
+
+A defined-risk spread is margined by a broker at its **max loss**, because the
+credit is already in the account. So the statement reads:
+
+```
+starting cash + premium = total balance - locked collateral = free cash
+```
+
+That is `Ledger.free_cash` (`cash - collateral_held`), and it is the figure that
+reconciles against a real brokerage account.
+
+`Ledger.buying_power` is deliberately different -- `cash - capital_at_risk`, the
+**gross width** -- and this was very nearly reversed on the grounds that it
+disagrees with the broker. It does. It also has to. Open until each gate refuses
+($3,000 cash, $400 collateral / $100 credit / $500 width per spread), then
+settle everything at max loss:
+
+| gate basis | opens | total width | cash after a total wipeout |
+|---|---|---|---|
+| broker, `cash - collateral` | 9 | $4,500 | **-$600** |
+| strict, `cash - width` | 7 | $3,500 | +$200 |
+
+The broker's basis permits an account to commit more max loss than it holds cash
+to settle. A brokerage absorbs that with a margin call; a cash account has no
+such line, and a book of beaten-down names across two sectors is precisely the
+correlated tail where every position lands at once. `test_balance.py` and
+`test_the_balance_can_never_be_driven_negative` exist for this and should not be
+"fixed".
+
+Both figures are now on the page, because they answer different questions and
+hiding either one is its own failure: showing only the broker's leaves the page
+claiming $2,293 is free while the agent silently refuses at $1,146, and showing
+only the agent's makes the page irreconcilable with the brokerage statement.
+
+**The process lesson is the sharper one.** The inconsistency that prompted this
+was real -- `risk.check` and `open_position` both CHARGE at `collateral + fees`
+while measuring capacity at `cash - width` -- and "make the two sides match"
+looked like an obvious cleanup. It would have deleted a solvency guarantee. The
+existing test file said so in its module docstring. Read the tests that cover a
+rule before concluding the rule is an accident.

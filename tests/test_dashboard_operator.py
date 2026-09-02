@@ -431,16 +431,18 @@ def test_the_cost_to_close_the_whole_book_is_on_the_page(money):
     assert round(led.premium_collected - led.cost_to_close, 2) == led.unrealized_pl
 
 
-def test_the_page_opens_with_the_arithmetic_in_words(money):
+def test_the_page_opens_with_the_arithmetic_before_the_cards(money):
     """Numbers do not explain themselves. Anyone should be able to read the
-    account without knowing what "net liquidation" means."""
+    account without knowing what "net liquidation" means. The cash ladder is a
+    running balance so it is a table; the rest is prose."""
     led, doc = money
-    story = doc.split('class="story"')[1].split("</div>")[0]
-    assert doc.index('class="story"') < doc.index('class="cards"')
+    head = doc.split('<div class="cards">')[0]
+    assert doc.index('class="bal"') < doc.index('class="story"') < doc.index('class="cards"')
     for figure in (f"${led.starting_cash:,.2f}", f"${led.premium_collected:,.2f}",
                    f"${led.cash:,.2f}", f"${led.cost_to_close:,.2f}",
-                   f"${led.net_liq:,.2f}", f"${led.collateral_held:,.2f}"):
-        assert figure in story, figure
+                   f"${led.net_liq:,.2f}", f"${led.collateral_held:,.2f}",
+                   f"${led.free_cash:,.2f}"):
+        assert figure in head, figure
 
 
 def test_the_story_explains_why_the_two_risk_numbers_differ(money):
@@ -488,3 +490,57 @@ def test_every_subtraction_on_the_page_actually_comes_out(money):
     assert round(led.gross_premium - led.premium_collected, 2) == led.fees_on_open
     story = " ".join(doc.split()).split('class="story"')[1].split("<h2>")[0]
     assert f"${led.fees_on_open:,.2f} of that premium went to fees" in story
+
+
+# --- the balance ladder -----------------------------------------------------
+def _bal(doc):
+    return " ".join(doc.split()).split('class="bal"')[1].split("</div><div class=\"story")[0]
+
+
+def test_the_cash_ladder_reads_as_an_account_statement(money):
+    """Starting cash, plus premium, is the balance; less locked collateral is
+    free cash. Every step signed and named, in the order a broker states it."""
+    led, doc = money
+    bal = _bal(doc)
+    for line in ("Starting cash", "+ Premium received", "= Total account balance",
+                 "Locked collateral", "= Free cash / buying power"):
+        assert line in bal, line
+    assert bal.index("Starting cash") < bal.index("= Total account balance")
+    assert bal.index("= Total account balance") < bal.index("= Free cash")
+
+
+def test_free_cash_is_the_brokers_figure_not_the_agents(money):
+    """A defined-risk spread is margined at its max loss, so this is what
+    reconciles against a brokerage statement."""
+    led, doc = money
+    assert round(led.cash - led.collateral_held, 2) == led.free_cash
+    assert f"${led.free_cash:,.2f}" in _bal(doc)
+    assert led.free_cash > led.buying_power
+
+
+def test_the_agents_stricter_limit_is_shown_with_its_reason(money):
+    """Without this row the page says $2,093 is free while the agent refuses at
+    $1,046, and nothing on screen explains the refusal."""
+    led, doc = money
+    bal = _bal(doc)
+    assert "the agent will open up to" in bal
+    assert f"${led.buying_power:,.2f}" in bal
+    assert f"the full ${led.capital_at_risk:,.0f} of width" in bal
+    assert "max loss at once" in bal
+
+
+def test_the_stricter_row_is_dropped_when_it_would_say_nothing(
+        led, settings, shut_market, tmp_path, monkeypatch):
+    """With nothing open the two figures are the same number."""
+    doc = _render(led, settings, shut_market, tmp_path, monkeypatch)
+    assert led.free_cash == led.buying_power
+    assert "the agent will open up to" not in _bal(doc)
+
+
+def test_showing_the_brokers_figure_did_not_loosen_the_gate(money):
+    """The page gained free_cash; the thing that decides what opens did not
+    change basis. See tests/test_balance.py for why that basis is the strict
+    one -- the broker's lets a correlated wipeout settle below zero."""
+    led, _ = money
+    assert led.buying_power == round(led.cash - led.capital_at_risk, 2)
+    assert round(led.free_cash - led.buying_power, 2) == led.gross_premium

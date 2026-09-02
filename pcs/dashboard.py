@@ -234,6 +234,24 @@ border-left:3px solid transparent}
 .cush.near{color:var(--warn)}
 .cush.tight{color:var(--warn)}
 .cush.breach{color:var(--neg)}
+/* The cash ladder as a statement, because that is what it is: one running
+   balance, each line named, each step showing its own sign. Prose cannot do a
+   running total and a grid can. */
+.bal{display:grid;grid-template-columns:auto max-content 1fr;gap:0 18px;
+align-items:baseline;background:linear-gradient(180deg,var(--panel),var(--panel2));
+border:1px solid var(--line);border-radius:13px;padding:15px 18px;
+box-shadow:var(--sh);margin:0 0 12px}
+.bal>div{padding:5px 0}
+.bal .lbl{color:var(--ink2);font-size:14px}
+.bal .amt{font-variant-numeric:tabular-nums;font-weight:640;color:var(--ink);
+font-size:15px;text-align:right;white-space:nowrap}
+.bal .dsc{color:var(--dim);font-size:12.5px;line-height:1.45}
+.bal .tot{border-top:1px solid var(--line);padding-top:9px;margin-top:2px}
+.bal .tot.lbl,.bal .tot.amt{font-weight:700;color:var(--ink)}
+.bal .tot.amt{font-size:16.5px}
+.bal .sub2{color:var(--dim)}
+.bal .sub2.amt{font-weight:600;color:var(--ink2);font-size:14px}
+
 /* The account in sentences, above the cards. Every card below is a noun the
    reader has to translate -- "net liquidation", "collateral held", "capital at
    risk" -- and three of them are dollar amounts differing only in which
@@ -376,6 +394,11 @@ h1{font-size:16.5px} h2{margin:24px 0 10px}
 .themer{width:31px;height:31px}
 .cards{grid-template-columns:repeat(auto-fit,minmax(144px,1fr));gap:9px}
 .story{padding:13px 14px;font-size:13.5px;line-height:1.65}
+/* Descriptions drop under their own row rather than squeezing the amount. */
+.bal{grid-template-columns:1fr max-content;padding:13px 14px;gap:0 12px}
+.bal .lbl{font-size:13.5px}
+.bal .dsc{grid-column:1/-1;padding:0 0 6px;margin-top:-3px;font-size:12px}
+.bal .tot.dsc{border-top:none;padding-top:0;margin-top:-3px}
 .card{padding:12px 13px;border-radius:11px} .card .v{font-size:19px}
 .tabs{gap:0;margin:18px 0 14px}
 /* nowrap + overflow-x on .tabs means these must not shrink, or six tabs
@@ -768,6 +791,51 @@ def _updown(v: float) -> str:
            f'{"up" if v >= 0 else "down"} ${abs(v):,.2f}</b>'
 
 
+def _balance_table(led: Ledger) -> str:
+    """The cash ladder, as an account statement.
+
+    Two figures here answer two different questions and neither is wrong.
+
+    `free_cash` is the broker's, and it is what reconciles against a brokerage
+    statement -- a defined-risk spread is margined at its max loss, because the
+    credit is already in the account.
+
+    `buying_power` is what this agent will actually open against, and it is
+    stricter. The broker's basis lets an account be filled until the sum of
+    widths exceeds cash; a correlated wipeout then settles below zero, and a
+    cash account has no margin line to absorb it. Showing only the broker's
+    figure would leave the page saying $2,093 is free while the agent quietly
+    refuses at $1,046, with nothing on screen to explain the refusal.
+    """
+    n = len(led.open_positions)
+    noun = "spread" if n == 1 else "spreads"
+    fees = led.fees_on_open
+    fee_txt = f", after ${fees:,.2f} of fees" if fees else ""
+    rows = [
+        ("Starting cash", f"${led.starting_cash:,.2f}",
+         "what you put in", ""),
+        ("+ Premium received", f"+${led.premium_collected:,.2f}",
+         f"credit from selling the {n} open {noun}{fee_txt}", ""),
+        ("= Total account balance", f"${led.cash:,.2f}",
+         "your cash today", "tot"),
+        ("&minus; Locked collateral", f"&minus;${led.collateral_held:,.2f}",
+         f"held against the max loss until these {noun} close", ""),
+        ("= Free cash / buying power", f"${led.free_cash:,.2f}",
+         "what a broker would let you deploy", "tot"),
+    ]
+    # Only worth a row once it actually bites -- with nothing open the two
+    # figures are the same number and the explanation is noise.
+    if led.buying_power != led.free_cash:
+        rows.append((
+            "&#8627; the agent will open up to", f"${led.buying_power:,.2f}",
+            f"stricter on purpose: cash less the full ${led.capital_at_risk:,.0f} "
+            f"of width, so no set of fills can leave the book unable to settle "
+            f"itself if every spread goes to max loss at once", "sub2"))
+    return '<div class="bal">' + "".join(
+        f'<div class="lbl {c}">{lbl}</div><div class="amt {c}">{amt}</div>'
+        f'<div class="dsc {c}">{dsc}</div>' for lbl, amt, dsc, c in rows) + "</div>"
+
+
 def _money_story(led: Ledger) -> str:
     """The account in three sentences, above the cards.
 
@@ -783,7 +851,6 @@ def _money_story(led: Ledger) -> str:
     the cards below is one the reader has already met in a sentence.
     """
     n = len(led.open_positions)
-    noun = "spread" if n == 1 else "spreads"
     closed = len(led.closed_positions)
     booked = (f' {_updown(led.realized_pl)} booked on {closed} closed '
               f'trade{"" if closed == 1 else "s"}.' if closed else "")
@@ -800,11 +867,9 @@ def _money_story(led: Ledger) -> str:
     fees = led.fees_on_open
     fee_note = (f" ${fees:,.2f} of that premium went to fees, so "
                 f"${led.premium_collected:,.2f} is what reached cash." if fees else "")
+    # The cash ladder is the table above; this says only what a running balance
+    # cannot -- what the book is worth today, and what it could lose.
     lines = [
-        f"You put in {_amt(led.starting_cash)}. The <b>{n}</b> open {noun} paid "
-        f"{_amt(led.premium_collected)} of premium up front, so cash is now "
-        f"{_amt(led.cash)}.",
-
         f"Buying all {n} back today would cost {_amt(led.cost_to_close)}, so the "
         f"account is worth {_amt(led.net_liq)} &mdash; {_updown(total_pl)} "
         f"({led.total_return:+.2%}) on what you put in.{booked}",
@@ -815,10 +880,7 @@ def _money_story(led: Ledger) -> str:
         f"Worst case, all {n} finishing fully in the money: you would pay out "
         f"{_amt(led.capital_at_risk)} and keep the {_amt(led.gross_premium)} "
         f"they sold for, so the real loss is {_amt(led.collateral_held)} "
-        f"&mdash; {risk_pct:.0%} of the account.{fee_note} That "
-        f"{_amt(led.capital_at_risk)} stays tied up until they close, leaving "
-        f"{_amt(led.buying_power)} of your {_amt(led.cash)} in cash free to "
-        f"open with.",
+        f"&mdash; {risk_pct:.0%} of the account.{fee_note}",
     ]
     return '<div class="story">' + "".join(f"<p>{ln}</p>" for ln in lines) + "</div>"
 
@@ -1416,6 +1478,7 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 <section class="panel" id="p-now">
 <div class="saved" id="saved" hidden></div>
 {_alerts_panel(alerts)}
+{_balance_table(led)}
 {_money_story(led)}
 <div class="cards">{card_html}</div>
 
