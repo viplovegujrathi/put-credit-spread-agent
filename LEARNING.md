@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 377 tests, ruff clean.
+- 390 tests, ruff clean.
 
 ---
 
@@ -912,3 +912,73 @@ while measuring capacity at `cash - width` -- and "make the two sides match"
 looked like an obvious cleanup. It would have deleted a solvency guarantee. The
 existing test file said so in its module docstring. Read the tests that cover a
 rule before concluding the rule is an accident.
+
+---
+
+## 38. The first real loss was the plumbing, not the strategy
+
+GOOGL 325/320, sold for $1.1625 on 2026-09-01 at 14:39 UTC. Stopped out the
+next morning at 13:50 UTC for a realized **-$209.31** -- 54% of the $383.75 max
+loss, on day 1 of 31.
+
+The stock over that span: **336.64 -> 335.26**. Down 0.41%, and still 3.1%
+clear of the short strike, which was never touched. `under_strike_at_close` was
+`False`. Nothing GOOGL did moved $2 of spread value.
+
+The mark did it. `cost_to_close` blends the mid with a worst case,
+`nat = sq.ask - lq.bid`. When the long leg's bid is missing the hedge stops
+subtracting, and a five-wide defined-risk spread is valued as a naked short
+put. `PutQuote.mid` fails the same way one line earlier: no broker mark and no
+two-sided book and it falls through to `last` -- possibly days old -- then to
+whichever side is non-zero, returning a guess with the shape of a quote.
+
+Three things had to line up, and all three are worth keeping in mind:
+
+1. **13:50 UTC is 09:50 ET.** The box clock is UTC, and that is twenty minutes
+   into the session -- inside the opening range this system already treats as
+   untrustworthy for pricing. `opening_settle_minutes` blocks *opening* there.
+   `exits.py` deliberately does NOT block exits there, and the reasoning in its
+   docstring is sound: a stop that will not fire while a position is moving
+   against you is not a stop. That reasoning holds. It just assumes the mark is
+   real.
+2. **`cost_to_close` returned `None` only for a MISSING STRIKE.** A strike that
+   exists with a row of zeros priced happily. So `exits.py`'s stated contract --
+   *"a stale mark decides nothing"* -- did not actually hold; a junk mark
+   decided plenty.
+3. **The stop is tighter than it reads.** `stop_loss_credit_multiple = 2.0` on a
+   spread that took in 23% of width fires at **30% of max loss**, well before
+   the `stop_loss_pct_of_max_loss = 0.5` backstop can ever bite. That backstop
+   is dead code for any thin-credit spread. Neither number is wrong; together
+   they do not say what their names suggest.
+
+### The fix, and why it is in this direction
+
+`cost_to_close` now refuses to price unless BOTH legs carry either a broker
+mark or a genuinely two-sided book, and clamps the result to the width -- a
+vertical can never cost more than its max loss to buy back, which is arithmetic
+and true under every quote.
+
+Refusing to mark is the lenient failure. It only ever DELAYS a decision: the
+position stays out of `fresh`, `exits.review` skips it, `mark` reports it under
+"could not decide", and a human can still close it by hand. Marking badly MAKES
+the decision, and here it makes it as a market order. The cost is a false
+refusal when a long leg has genuinely gone to zero and the wide mark was right;
+that is the cheap direction.
+
+### The part that generalises
+
+The stop was not wrong. It executed correctly on a number that was wrong. Every
+guard on the DECISION -- thresholds, approval gates, caps -- is worth exactly
+as much as the measurement under it, and this codebase had spent far more care
+on the decisions than on the inputs.
+
+It also changes what the record says. One closed trade, 0W/1L, is not evidence
+about the strategy -- that trade never tested it. Do not read the win rate as a
+signal until enough closes exist that were priced honestly. `learning.py` will
+not draw a conclusion under 8 either way, which is the right answer for a
+different reason than it thinks.
+
+Pinned by `tests/test_mark_quality.py`, which reconstructs the exact chain and
+asserts both halves: that the guard refuses it now, and that the old arithmetic
+really did fire the stop -- otherwise the first assertion passes for the wrong
+reason and proves nothing.

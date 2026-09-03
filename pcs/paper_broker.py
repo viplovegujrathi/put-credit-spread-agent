@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from .chains import PutChain, get_chain
+from .chains import PutChain, PutQuote, get_chain
 from .config import STRATEGY, Settings
 from .exits import ExitDecision, review
 from .ledger import EXPIRED, Ledger, Position, new_id
@@ -133,16 +133,76 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
     return ledger.open_position(pos)
 
 
+def _priceable(q: PutQuote) -> bool:
+    """A quote good enough to mark a position that a stop is allowed to act on.
+
+    Either the broker gave us its own mark, or the book is genuinely two-sided.
+    Anything else and `PutQuote.mid` is guessing: its last branch falls back to
+    `last` -- which on a quiet strike can be days old -- and then to whichever
+    side happens to be non-zero, and it returns that with no indication that it
+    is not a quote. That is tolerable for sizing, where the optimizer applies
+    its own spread caps and a bad candidate is simply skipped. It is not
+    tolerable for a mark, because `apply_exits` turns a mark into a market
+    order without asking anyone.
+    """
+    return q.mark > 0 or (q.bid > 0 and q.ask > 0)
+
+
+def unpriceable(chain: PutChain, pos: Position) -> str:
+    """Why this spread cannot be marked, or "" if it can.
+
+    Split out from `cost_to_close` so the journal can say which leg failed.
+    A missing strike and a one-sided quote are different faults with different
+    fixes, and a record that calls them both "strikes missing from chain" sends
+    whoever reads it to the wrong place.
+    """
+    bad = []
+    for leg, k in (("short", pos.short_strike), ("long", pos.long_strike)):
+        q = chain.at(k)
+        if q is None:
+            bad.append(f"{leg} leg {k:g} missing from the chain")
+        elif not _priceable(q):
+            bad.append(f"{leg} leg {k:g} quoted one-sided "
+                       f"(bid {q.bid:g}, ask {q.ask:g}, no broker mark)")
+    return "; ".join(bad)
+
+
 def cost_to_close(chain: PutChain, pos: Position, settings: Settings) -> float | None:
-    """Debit to buy the spread back, per share. None if the chain can't price it."""
+    """Debit to buy the spread back, per share. None when it cannot be priced.
+
+    Returning None is not a failure to be minimised. `mark_positions` leaves
+    the position out of `fresh`, `exits.review` skips it, and `mark` reports it
+    under "could not decide". Refusing to mark only ever DELAYS a decision;
+    marking badly makes a wrong one, and a wrong one here is a market order.
+
+    Both legs must price, because a vertical is worth the difference between
+    them and a leg with no book does not offset anything. With `lq.bid` at zero
+    the worst case `sq.ask - lq.bid` collapses to the short leg's ask alone --
+    a defined-risk spread valued as a naked short put. That is not a rounding
+    error: a GOOGL 325/320 sold for $1.16 marked at $3.25 the next morning
+    while the stock had moved 0.41% and sat 3.1% clear of the short strike, and
+    the 2x stop closed it for a real $209 loss. Free feeds drop the bid on a
+    quiet strike routinely, most often in the first minutes of the session --
+    which is exactly when the opening range makes every quote least
+    trustworthy, and exactly when exits are still deliberately allowed to fire.
+
+    The cost is a false refusal on a long leg that has genuinely gone to zero,
+    where the wide mark would have been right. That direction is the cheap one:
+    it holds a position the operator can still see and close by hand.
+    """
     sq, lq = chain.at(pos.short_strike), chain.at(pos.long_strike)
-    if sq is None or lq is None:
+    if sq is None or lq is None or unpriceable(chain, pos):
         return None
     mid = sq.mid - lq.mid
     nat = sq.ask - lq.bid          # worst case: lift the offer, hit the bid
     if mid <= 0 and nat <= 0:
         return 0.0
-    return round(max(mid + settings.paper_slippage_frac * (nat - mid), 0.0), 4)
+    debit = mid + settings.paper_slippage_frac * (nat - mid)
+    # A vertical can never cost more than its width to buy back: the long leg
+    # is what caps the loss, so paying more than the width would be paying more
+    # than the max loss the position was opened against. Arithmetic, not
+    # caution -- no quote makes this untrue.
+    return round(min(max(debit, 0.0), pos.width), 4)
 
 
 def settle_expired(pos: Position, spot: float) -> tuple[float, str]:
@@ -175,7 +235,8 @@ def mark_positions(ledger: Ledger, settings: Settings, spots: dict[str, float]
                           spot=spot)
         debit = cost_to_close(chain, pos, settings)
         if debit is None:
-            notes.append((pos, f"could not mark: {chain.error or 'strikes missing from chain'}"))
+            notes.append((pos, f"could not mark: "
+                               f"{chain.error or unpriceable(chain, pos)}"))
             continue
         pos.mark_cost_to_close = debit
         pos.mark_spot = spot or chain.spot or pos.mark_spot
