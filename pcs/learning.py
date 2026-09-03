@@ -69,10 +69,11 @@ QUARANTINE_KINDS = (MARK_FAILED, CHAIN_ERROR)
 class Outcome:
     """One closed position, flattened to what can be learned from.
 
-    Only fields the ledger genuinely recorded at open appear here. The screen
-    features -- how far off the 52-week high, how far below the 50dma -- are
-    NOT on Position, so they cannot be learned from yet; `feature_gaps()`
-    reports that rather than letting their absence pass as "no signal".
+    Only fields the ledger genuinely recorded at open appear here. The four
+    entry features at the bottom are `None` on every trade opened before the
+    ledger began recording them, so each split drops the rows that never had
+    the number rather than reading a missing measurement as a zero -- and
+    `feature_gaps()` says how many rows that is.
     """
     id: str
     symbol: str
@@ -95,6 +96,14 @@ class Outcome:
     exit_kind: str              # take_profit | stop_loss | defend | expired | manual
     result: str                 # WIN | LOSS | SCRATCH
     under_strike_at_close: bool
+    # The screen conditions and the strike's own numbers, as at entry. Default
+    # None so a journal.json written before these existed still loads, and so a
+    # trade that never recorded them is excluded from their splits instead of
+    # counted at zero.
+    pct_off_high: float | None = None
+    pct_from_dma50: float | None = None
+    short_delta: float | None = None
+    iv_at_open: float | None = None
 
 
 @dataclass
@@ -187,6 +196,10 @@ def to_outcome(pos: Position) -> Outcome:
         quote_quality=pos.quote_quality or "unknown", basis=pos.basis or "unknown",
         exit_kind=_exit_kind(pos), result=_result(pos.realized_pl),
         under_strike_at_close=bool(pos.mark_spot and pos.mark_spot <= pos.short_strike),
+        pct_off_high=pos.pct_off_high_at_open,
+        pct_from_dma50=pos.pct_from_dma50_at_open,
+        short_delta=pos.short_delta_at_open,
+        iv_at_open=pos.iv_at_open,
     )
 
 
@@ -305,10 +318,24 @@ def _avg(rows: list[Outcome]) -> float:
     return round(sum(o.realized_pl for o in rows) / len(rows), 2) if rows else 0.0
 
 
+def _abs(v: float | None) -> float | None:
+    """|v|, preserving None. `abs(None)` raises, and it would raise inside
+    `_split`'s own None filter -- which has to call the key to test it."""
+    return None if v is None else abs(v)
+
+
 def _split(rows: list[Outcome], key, threshold: float
            ) -> tuple[list[Outcome], list[Outcome]]:
-    return ([o for o in rows if key(o) < threshold],
-            [o for o in rows if key(o) >= threshold])
+    """Two-way split, dropping rows where the feature was never recorded.
+
+    The `None` filter is the whole reason this is not a one-liner at the call
+    site. Four of the features arrived after the first trades closed, and a
+    missing delta read as 0.0 would land every one of those rows in the
+    low bucket -- inventing a pattern out of the date the field was added.
+    """
+    have = [o for o in rows if key(o) is not None]
+    return ([o for o in have if key(o) < threshold],
+            [o for o in have if key(o) >= threshold])
 
 
 def _compare(key: str, title: str, dimension: str, low: list[Outcome],
@@ -425,6 +452,49 @@ def lessons(journal: Journal, settings: Settings) -> list[Lesson]:
     if lesson:
         out.append(lesson)
 
+    # The screen's own two conditions. Until the ledger recorded these, the
+    # agent could tell you how a trade ended and nothing about whether the
+    # setup that picked it was worth picking -- which is the only question the
+    # screen exists to answer.
+    lo, hi = _split(rows, lambda o: o.pct_off_high, 0.25)
+    lesson = _compare(
+        "off_high", "How far off the 52-week high", "screen", lo, hi,
+        "moderately beaten down (15-25% off)", "deeply beaten down (>=25% off)",
+        settings)
+    if lesson:
+        out.append(lesson)
+
+    # More negative = further below the average. The primary band is -8% to
+    # -3%, so this splits the band down the middle rather than at zero.
+    lo, hi = _split(rows, lambda o: o.pct_from_dma50, -0.055)
+    lesson = _compare(
+        "dma_depth", "Depth of the pullback to the 50-day average", "screen", lo, hi,
+        "deep in the band (>5.5% below the 50dma)",
+        "shallow in the band (<5.5% below the 50dma)", settings)
+    if lesson:
+        out.append(lesson)
+
+    # Delta is the cleanest proxy for how much risk the strike took on, and it
+    # is the one number here that a setting can act on directly.
+    # Reported, never turned into a suggestion. `_compare` only offers its
+    # `config --set` line when the HIGH side wins, and high here is the NEAR
+    # strike -- so a win for near strikes would have printed "widen the
+    # cushion", which is the opposite of what the record just said. The cushion
+    # lesson above already owns that knob, and it splits the right way round.
+    lo, hi = _split(rows, lambda o: _abs(o.short_delta), 0.20)
+    lesson = _compare(
+        "delta", "Short-leg delta at entry", "strike", lo, hi,
+        "far strike (|delta| < 0.20)", "near strike (|delta| >= 0.20)", settings)
+    if lesson:
+        out.append(lesson)
+
+    lo, hi = _split(rows, lambda o: o.iv_at_open, 0.40)
+    lesson = _compare(
+        "iv", "Implied volatility at entry", "vol", lo, hi,
+        "quiet vol (IV < 40%)", "rich vol (IV >= 40%)", settings)
+    if lesson:
+        out.append(lesson)
+
     # The operationally actionable one: a paper account that does measurably
     # worse on fills taken against stale quotes is telling you the haircut is
     # too small, not that the strategy is wrong.
@@ -451,19 +521,46 @@ def lessons(journal: Journal, settings: Settings) -> list[Lesson]:
     return out
 
 
-def feature_gaps() -> list[str]:
-    """Screen features the ledger does not record, so cannot be learned from.
+# Reported by `feature_gaps`, and the reason each split filters None.
+_ENTRY_FEATURES = (
+    ("pct_off_high", "% off the 52-week high at entry"),
+    ("pct_from_dma50", "% from the 50-day average at entry"),
+    ("short_delta", "short-leg delta at entry"),
+    ("iv_at_open", "implied volatility at entry"),
+)
+
+
+def feature_gaps(journal: Journal | None = None) -> list[str]:
+    """What still cannot be learned from, and why.
 
     Stated rather than silently absent: "no signal from % off the 52-week high"
     and "% off the 52-week high was never written down" look identical on a
     dashboard and mean completely different things.
+
+    The four entry features are recorded now. What replaces them here is the
+    honest successor problem -- every trade closed before that change has them
+    as `None` and is dropped from those splits, so the sample that can speak to
+    the screen is smaller than the sample overall until the book turns over.
+    Pass the journal to have that counted rather than described.
     """
-    return [
-        "% off the 52-week high at entry -- not stored on the position",
-        "% from the 50-day average at entry -- not stored on the position",
-        "short-leg delta at entry -- computed during sizing, dropped at fill",
-        "implied volatility / IV rank at entry -- never captured",
+    out = [
+        "IV RANK at entry -- IV itself is recorded now, but a rank needs a year "
+        "of implied-vol history for the name and nothing collects one. Absolute "
+        "IV cannot tell 40% in a quiet name from 40% in a jumpy one.",
     ]
+    if journal is None:
+        return out
+    rows = journal.outcomes
+    if not rows:
+        return out
+    for attr, label in _ENTRY_FEATURES:
+        blind = sum(getattr(o, attr) is None for o in rows)
+        if blind:
+            out.insert(0, f"{label} -- missing on {blind} of {len(rows)} closed "
+                          f"trade(s), which were opened before the ledger recorded "
+                          f"it. Those rows are dropped from this split, not "
+                          f"counted as zero.")
+    return out
 
 
 def summary(journal: Journal, settings: Settings) -> dict:

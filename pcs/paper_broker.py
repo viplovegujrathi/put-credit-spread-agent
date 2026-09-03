@@ -44,6 +44,17 @@ class TradingDisabled(OpenBlocked):
     because pausing new risk is not a reason to stop managing existing risk."""
 
 
+class CoolingOff(OpenBlocked):
+    """Raised when a name closed at a loss too recently to re-enter.
+
+    Enforced here and not only in `risk.check` because this gate is the only
+    one that sees the present. A proposal carries the verdict it was given when
+    it was written, so a ticket produced at 13:00 still reads `risk_ok` after a
+    stop fires at 13:50 -- and that is precisely the sequence this exists to
+    stop.
+    """
+
+
 PAPER_EXTRA_HAIRCUT = 0.10
 
 
@@ -65,18 +76,27 @@ def simulated_fill_credit(spread: Spread, settings: Settings,
 
 def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
                   settings: Settings, proposal_id: str, approved_by: str,
-                  sess: SessionState | None = None) -> Position:
+                  sess: SessionState | None = None,
+                  pct_off_high: float | None = None,
+                  pct_from_dma50: float | None = None) -> Position:
     """Open a paper position.
 
-    Four gates, all enforced here rather than left to instructions: the master
-    trading switch, a recorded approver, a settled session, and a balance the
-    account actually has. The opening-range block applies to paper as well as live -- a
-    paper record built on opening-auction fills would overstate what the live
-    account could have achieved.
+    Five gates, all enforced here rather than left to instructions: the master
+    trading switch, a recorded approver, a settled session, the re-entry
+    cooldown, and a balance the account actually has. The opening-range block
+    applies to paper as well as live -- a paper record built on opening-auction
+    fills would overstate what the live account could have achieved.
 
     The balance gate is checked against the *filled* collateral, not the
     proposal's. A worse fill means less credit, which means MORE collateral, so
     a spread sized inside the balance can land outside it.
+
+    `pct_off_high` and `pct_from_dma50` are the screen conditions that selected
+    this name. They live on the Candidate, which does not reach this far, so
+    they are passed in and written onto the position -- the alternative is a
+    journal that can measure how a trade ended and nothing about why it was
+    picked. Both default to None, which the ledger stores as "not recorded"
+    rather than as zero.
     """
     if not settings.paper_trading:
         raise TradingDisabled(
@@ -94,6 +114,15 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
     sess = sess or state_for(settings)
     if not sess.can_open_positions:
         raise MarketNotReady(sess.open_block_reason)
+
+    clear_on = ledger.cooling_off(settings).get(spread.symbol)
+    if clear_on:
+        raise CoolingOff(
+            f"{spread.symbol} closed at a loss inside the last "
+            f"{settings.reentry_cooldown_days} day(s) and is not eligible again "
+            f"until {clear_on}. A stop reads a mark, and re-opening the same name "
+            f"straight after one pays for a bad print twice. Shorten the wait with "
+            f"`./run.py config --set reentry_cooldown_days=N`, or 0 to switch it off.")
 
     fill = simulated_fill_credit(spread, settings, sess)
     fees = round(spread.fees * contracts, 2)
@@ -129,6 +158,12 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
         marked_at=dt.datetime.now().isoformat(timespec="seconds"),
         fees_paid=fees, proposal_id=proposal_id, approved_by=approved_by,
         basis=spread.basis, source=spread.source, quote_quality=spread.quote_quality,
+        pct_off_high_at_open=pct_off_high, pct_from_dma50_at_open=pct_from_dma50,
+        # Both already sit on the sized spread and were thrown away at fill.
+        # `spread.iv` falls back to 0.30 when the chain quotes none, so a zero
+        # is the one value that is definitely not a measurement.
+        short_delta_at_open=spread.short_delta,
+        iv_at_open=spread.iv or None,
     )
     return ledger.open_position(pos)
 

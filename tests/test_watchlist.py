@@ -117,13 +117,39 @@ def test_a_name_with_no_qualifying_spread_is_no_fit(settings, led, live_session)
     assert e.reason
 
 
-def test_an_open_position_shows_as_holding(settings, led, live_session, monkeypatch):
+def test_holding_means_at_the_cap_not_merely_owning_one(settings, led, live_session):
+    """HOLDING used to mean "we own one of these", which was the same statement
+    as "we cannot take more" only while the per-ticker cap was 1. Above that a
+    held name can legitimately take another, and calling it HOLDING would hide
+    a permitted add behind a status that reads as nothing-to-do."""
     from pcs.paper_broker import open_approved
     sp = build_spreads(make_chain(symbol="TST", spot=100.0), 100.0, settings,
                        live_session)[0][0]
+    settings.max_positions_per_ticker = 2
     open_approved(led, sp, "Energy", 1, settings, "P1", "human", sess=live_session)
-    wl = build(settings, live_session, [a_candidate("TST")], led)
-    assert wl.entries[0].signal == watchlist.HOLDING
+
+    e = build(settings, live_session, [a_candidate("TST")], led).entries[0]
+    assert e.signal != watchlist.HOLDING and e.held == 1
+
+    open_approved(led, sp, "Energy", 1, settings, "P2", "human", sess=live_session)
+    e = build(settings, live_session, [a_candidate("TST")], led).entries[0]
+    assert e.signal == watchlist.HOLDING and e.held == 2
+
+
+def test_a_name_cooling_off_is_blocked_not_ready(settings, led, live_session):
+    """The watchlist has to say WHY a screened name is not being taken. A
+    cooldown that only lived in the fill path would leave the page showing
+    READY on a name the agent would refuse."""
+    from pcs.paper_broker import open_approved
+    sp = build_spreads(make_chain(symbol="TST", spot=100.0), 100.0, settings,
+                       live_session)[0][0]
+    pos = open_approved(led, sp, "Energy", 1, settings, "P1", "human", sess=live_session)
+    led.close_position(pos, debit=pos.credit_open * 3, reason="stop_loss: test")
+    assert pos.realized_pl < 0
+
+    e = build(settings, live_session, [a_candidate("TST")], led).entries[0]
+    assert e.signal == watchlist.BLOCKED
+    assert any("re-entry cooldown" in b for b in e.blockers)
 
 
 @pytest.mark.parametrize("bucket,expected", [

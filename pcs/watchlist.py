@@ -25,7 +25,7 @@ from .optimizer import Spread
 WATCHLIST_JSON = DATA_DIR / "watchlist.json"
 
 # Ordered by how close the name is to being traded. The dashboard sorts on this.
-HOLDING = "HOLDING"        # already open -- shown so the book is one list
+HOLDING = "HOLDING"        # at the per-ticker cap -- shown so the book is one list
 READY = "READY"            # sized, risk-clear: the next propose run opens it
 BLOCKED = "BLOCKED"        # clears the per-trade rules, a portfolio cap says no
 EARNINGS = "EARNINGS"      # excluded: earnings inside the expiration window
@@ -36,7 +36,7 @@ STRETCHED = "STRETCHED"    # 8-12% below: drifting toward broken-down
 _RANK = {HOLDING: 0, READY: 1, BLOCKED: 2, EARNINGS: 3, NO_FIT: 4, NEAR: 5, STRETCHED: 6}
 
 _SIGNAL_NOTE = {
-    HOLDING: "already open",
+    HOLDING: "already at the per-ticker cap on this name",
     READY: "clears every rule -- opens on the next run",
     BLOCKED: "a portfolio cap is in the way, not the trade itself",
     EARNINGS: "earnings land inside the expiration window",
@@ -71,6 +71,10 @@ class Entry:
     cushion: float = 0.0
     pop_est: float | None = None
     quote_quality: str = ""
+    # Open positions already on this name. A ladder is legal above a per-ticker
+    # cap of 1, so "we hold some" and "we cannot take more" stopped being the
+    # same statement and the page needs both.
+    held: int = 0
     blockers: list[str] = field(default_factory=list)
     # Carried so the page can say WHEN, not just that earnings are in the way.
     # "EARNINGS" with no date is unanswerable: tomorrow and in three weeks are
@@ -125,9 +129,10 @@ def build(res, sized: list, led: Ledger, settings: Settings,
     are not imported for typing because pipeline imports this module's siblings
     and the cycle is not worth the annotation.
     """
-    held = {p.symbol for p in led.open_positions}
+    held = led.ticker_counts()
     pv = risk.PortfolioView(led.collateral_held, len(led.open_positions),
-                            led.sector_counts(), held, led.cash, led.buying_power)
+                            led.sector_counts(), held, led.cash, led.buying_power,
+                            cooldowns=led.cooling_off(settings))
     by_symbol = {sc.candidate.symbol: sc for sc in sized}
     entries: list[Entry] = []
 
@@ -139,7 +144,13 @@ def build(res, sized: list, led: Ledger, settings: Settings,
                   pct_from_dma50=c.pct_from_dma50, pct_off_high=c.pct_off_high,
                   earnings_date=c.earnings_date or "")
 
-        if c.symbol in held:
+        # HOLDING is "the book is full on this name", not "the book owns one".
+        # Above a per-ticker cap of 1 a held name can legitimately take another,
+        # and labelling it HOLDING would hide a permitted add behind a status
+        # that reads as nothing-to-do. Below the cap it goes through the risk
+        # check like any other candidate, which is what surfaces the cooldown.
+        e.held = held.get(c.symbol, 0)
+        if e.held >= settings.max_positions_per_ticker:
             e.signal = HOLDING
         elif c.bucket == screener.NEAR_TIGHT:
             e.signal = NEAR

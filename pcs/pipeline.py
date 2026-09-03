@@ -170,8 +170,9 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
     pv = risk.PortfolioView(
         open_collateral=ledger.collateral_held, open_count=len(ledger.open_positions),
         sector_counts=ledger.sector_counts(),
-        symbols={p.symbol for p in ledger.open_positions},
-        cash=ledger.cash, buying_power=ledger.buying_power)
+        ticker_counts=ledger.ticker_counts(),
+        cash=ledger.cash, buying_power=ledger.buying_power,
+        cooldowns=ledger.cooling_off(settings))
 
     pending: list[tuple[str, str, float]] = []
     proposals: list[Proposal] = []
@@ -198,6 +199,7 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
             risk_ok=verdict.ok, risk_reasons=verdict.reasons,
             risk_warnings=verdict.warnings, earnings_date=c.earnings_date,
             earnings_note=note,
+            pct_off_high=c.pct_off_high, pct_from_dma50=c.pct_from_dma50,
         )
         proposals.append(p)
         seq += 1

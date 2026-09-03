@@ -195,7 +195,24 @@ class Settings:
     # out first and this number stops being the thing that binds.
     max_open_positions: int = 10
     max_positions_per_sector: int = 2
-    max_positions_per_ticker: int = 1
+    # Positions in one NAME, not contracts. Above 1 this is a ladder: two
+    # expirations or two strikes on the same underlying, which is a real way to
+    # scale into a setup and also the fastest way to concentrate an account.
+    #
+    # It does not bind on its own. A ticker has exactly one GICS sector, so
+    # `max_positions_per_sector` is the ceiling this can ever reach -- at a
+    # sector cap of 2, a per-ticker cap of 5 still tops out at 2. Raise the
+    # sector cap too if a deeper ladder in one name is actually wanted.
+    max_positions_per_ticker: int = 5
+
+    # Days a symbol is kept out of new positions after one closes at a LOSS.
+    # A stop that fires on a bad mark and a stop that fires on a real move look
+    # identical from the outside, and without this the agent re-proposes the
+    # name the same afternoon -- so a single bad print can be paid for twice.
+    # A winning close does not cool off: selling premium again in a name that
+    # just paid out is the strategy working, not churn.
+    # 0 disables it.
+    reentry_cooldown_days: int = 5
 
     # --- data sources -----------------------------------------------------
     chain_source: str = "yfinance"       # "yfinance" | "robinhood" | "model"

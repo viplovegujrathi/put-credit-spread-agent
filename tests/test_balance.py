@@ -141,7 +141,7 @@ def test_risk_check_sizes_the_balance_by_contract_count(settings, live_session):
     """A 2-lot must be checked as a 2-lot, not silently as a 1-lot."""
     sp = a_spread(settings, live_session)
     bal = sp.collateral * 1.5                     # room for one, not for two
-    pv = PortfolioView(0, 0, {}, set(), bal, bal)
+    pv = PortfolioView(0, 0, {}, {}, bal, bal)
     assert check(sp, "Industrials", pv, settings, contracts=1).ok
     v = check(sp, "Industrials", pv, settings, contracts=2)
     assert not v.ok and any("available balance" in r for r in v.reasons)
@@ -151,7 +151,7 @@ def test_a_batch_cannot_collectively_outspend_the_balance(settings, live_session
     """Two proposals that each fit alone must not both pass when only one fits."""
     sp = a_spread(settings, live_session)
     bal = sp.collateral * 1.5
-    pv = PortfolioView(0, 0, {}, set(), bal, bal)
+    pv = PortfolioView(0, 0, {}, {}, bal, bal)
     settings.max_total_collateral = 10_000        # isolate the balance rule
     assert check(sp, "Industrials", pv, settings).ok
     pending = [("AAA", "Energy", sp.collateral)]

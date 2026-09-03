@@ -18,7 +18,8 @@ from pcs.ledger import CLOSED, EXPIRED, OPEN, Ledger, Position
 
 def _pos(pid="p1", symbol="TST", pl=50.0, reason="take_profit: 58% of max credit",
          status=CLOSED, credit=0.60, opened="2026-08-01T11:00:00",
-         closed="2026-08-20T11:00:00", spot=100.0, short=95.0, quality="live"):
+         closed="2026-08-20T11:00:00", spot=100.0, short=95.0, quality="live",
+         off_high=None, from_dma=None, delta=None, iv=None):
     return Position(
         id=pid, symbol=symbol, sector="Energy", expiration="2026-09-04",
         short_strike=short, long_strike=short - 5, width=5.0, contracts=1,
@@ -26,7 +27,8 @@ def _pos(pid="p1", symbol="TST", pl=50.0, reason="take_profit: 58% of max credit
         opened_at=opened, opened_spot=spot, status=status,
         mark_cost_to_close=0.1, mark_spot=spot, marked_at=closed,
         closed_at=closed, close_debit=0.1, realized_pl=pl, close_reason=reason,
-        quote_quality=quality)
+        quote_quality=quality, pct_off_high_at_open=off_high,
+        pct_from_dma50_at_open=from_dma, short_delta_at_open=delta, iv_at_open=iv)
 
 
 @pytest.fixture
@@ -269,9 +271,73 @@ def test_round_trip_preserves_every_record(settings, tmp_path):
 
 
 # --- honesty ---------------------------------------------------------------
-def test_the_unrecorded_features_are_named_rather_than_silently_absent():
-    gaps = " ".join(learning.feature_gaps())
+def test_iv_rank_is_still_named_as_a_gap():
+    """IV is recorded now; a RANK needs a year of implied-vol history for the
+    name and nothing collects one. Absolute IV cannot tell 40% in a quiet name
+    from 40% in a jumpy one, so the gap has to keep being stated."""
+    assert "RANK" in " ".join(learning.feature_gaps())
+
+
+def test_trades_that_predate_a_feature_are_counted_not_described():
+    """The successor to the old gap list. The features exist now, so the honest
+    statement is no longer "never recorded" -- it is how many of the closed
+    trades on record were opened before they were, because those rows are
+    dropped from their comparisons."""
+    rows = [learning.to_outcome(_pos("old")),
+            learning.to_outcome(_pos("new", off_high=0.30, from_dma=-0.05,
+                                     delta=-0.18, iv=0.35))]
+    gaps = " ".join(learning.feature_gaps(learning.Journal(outcomes=rows)))
+    assert "1 of 2" in gaps
     assert "52-week high" in gaps and "50-day average" in gaps
+    assert "not\n" not in gaps      # the sentence must not wrap mid-claim
+
+    clean = " ".join(learning.feature_gaps(learning.Journal(outcomes=[rows[1]])))
+    assert "52-week high" not in clean
+
+
+def test_a_missing_feature_is_never_read_as_a_zero(settings):
+    """The trap this design exists to avoid. `pct_off_high=None` on the older
+    rows would compare as 0.0 -- putting every trade opened before the feature
+    existed in the "least beaten down" bucket and inventing a pattern out of
+    the date a field was added."""
+    # Twelve losers with no features recorded, four winners deeply off the high.
+    rows = [learning.to_outcome(_pos(f"blind{i}", pl=-40.0)) for i in range(12)]
+    rows += [learning.to_outcome(_pos(f"seen{i}", pl=40.0, off_high=0.30,
+                                      from_dma=-0.05, delta=-0.18, iv=0.35))
+             for i in range(4)]
+    keys = {les.key for les in learning.lessons(learning.Journal(outcomes=rows), settings)}
+    # One side of every feature split holds 0 recorded rows, so no comparison
+    # clears `learning_min_group` and none of them may report.
+    assert not keys & {"off_high", "dma_depth", "delta", "iv"}
+
+
+def test_the_entry_features_become_learnable_once_recorded(settings):
+    """The point of recording them. Same shape as the cushion lesson: enough
+    rows on both sides of the split, and a win-rate gap that clears the floor."""
+    rows = [learning.to_outcome(_pos(f"deep{i}", pl=40.0, off_high=0.35,
+                                     from_dma=-0.05, delta=-0.15, iv=0.30))
+            for i in range(5)]
+    rows += [learning.to_outcome(_pos(f"shallow{i}", pl=-40.0, off_high=0.18,
+                                      from_dma=-0.05, delta=-0.15, iv=0.30))
+             for i in range(5)]
+    les = {x.key: x for x in learning.lessons(learning.Journal(outcomes=rows), settings)}
+    assert "off_high" in les
+    assert "deeply beaten down" in les["off_high"].finding
+    assert les["off_high"].confidence == learning.TENTATIVE   # n=10 < strong sample
+
+
+def test_delta_never_suggests_a_knob(settings):
+    """`_compare` prints its suggestion only when the HIGH side wins, and high
+    on this split is the NEAR strike -- so a win for near strikes would have
+    printed "widen the cushion", the opposite of what the record said. The
+    cushion lesson owns that setting and splits the right way round."""
+    rows = [learning.to_outcome(_pos(f"near{i}", pl=40.0, delta=-0.30))
+            for i in range(5)]
+    rows += [learning.to_outcome(_pos(f"far{i}", pl=-40.0, delta=-0.10))
+             for i in range(5)]
+    for les in learning.lessons(learning.Journal(outcomes=rows), settings):
+        if les.key == "delta":
+            assert not les.suggestion
 
 
 def test_the_strategy_baseline_is_never_a_suggestion_target(settings):

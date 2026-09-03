@@ -246,7 +246,8 @@ def _auto_open(props, led, settings: Settings, sess, journal=None) -> int:
         try:
             pos = paper_broker.open_approved(
                 led, Spread(**p.spread), p.sector, p.contracts, settings,
-                proposal_id=p.id, approved_by=approver, sess=sess)
+                proposal_id=p.id, approved_by=approver, sess=sess,
+                pct_off_high=p.pct_off_high, pct_from_dma50=p.pct_from_dma50)
         except paper_broker.OpenBlocked as exc:
             held.append((p, str(exc)))
             learning.record_fault(journal, learning.OPEN_BLOCKED, p.symbol, str(exc))
@@ -305,13 +306,15 @@ def cmd_approve(args, settings: Settings) -> int:
     try:
         pos = paper_broker.open_approved(led, sp, p.sector, p.contracts, settings,
                                          proposal_id=p.id, approved_by=approver,
-                                         sess=sess)
+                                         sess=sess, pct_off_high=p.pct_off_high,
+                                         pct_from_dma50=p.pct_from_dma50)
     except paper_broker.MarketNotReady as exc:
         print(f"\nHELD - {exc}")
         print(f"  {p.id} stays pending. Re-run this same command after "
               f"{sess.settle_until:%H:%M} ET.")
         return 1
-    except (paper_broker.InsufficientFunds, paper_broker.TradingDisabled) as exc:
+    except (paper_broker.InsufficientFunds, paper_broker.TradingDisabled,
+            paper_broker.CoolingOff) as exc:
         print(f"\nHELD - {exc}")
         print(f"  {p.id} stays pending; the ledger is unchanged.")
         return 1
@@ -514,8 +517,8 @@ def cmd_learn(args, settings: Settings) -> int:
         if lesson.suggestion:
             print(f"  suggested, NOT applied:  {lesson.suggestion}")
 
-    print("\nNot learnable -- the ledger never recorded these at open:")
-    for g in learning.feature_gaps():
+    print("\nStill not learnable:")
+    for g in learning.feature_gaps(journal):
         print(f"  - {g}")
     print("\nNothing above has been applied. Every number stays where it is until "
           "you change it.")
@@ -683,8 +686,12 @@ _CONFIG_GROUPS = (
     ("Portfolio caps", (
         ("max_total_collateral", "across the whole book"),
         ("max_open_positions", ""),
-        ("max_positions_per_sector", ""),
-        ("max_positions_per_ticker", ""),
+        ("max_positions_per_sector", "a ticker has one sector, so this is the "
+                                     "ceiling the per-ticker cap can reach"),
+        ("max_positions_per_ticker", "positions in one NAME; above 1 this is a "
+                                     "ladder in a single underlying"),
+        ("reentry_cooldown_days", "days a name is held out after closing at a "
+                                  "loss (0 = off)"),
     )),
     ("Self-learning  (suggestions only; the agent applies none of them)", (
         ("self_repair", "let the agent bench symbols whose chains keep failing"),

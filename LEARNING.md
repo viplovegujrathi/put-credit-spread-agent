@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 390 tests, ruff clean.
+- 413 tests, ruff clean.
 
 ---
 
@@ -982,3 +982,129 @@ Pinned by `tests/test_mark_quality.py`, which reconstructs the exact chain and
 asserts both halves: that the guard refuses it now, and that the old arithmetic
 really did fire the stop -- otherwise the first assertion passes for the wrong
 reason and proves nothing.
+
+
+---
+
+## 39. A cap that printed its own number and behaved as 1
+
+`max_positions_per_ticker` did not work. `PortfolioView` held `symbols: set[str]`
+and the gate was:
+
+```python
+if spread.symbol in symbols:
+    reasons.append(f"already holding a spread on {spread.symbol} "
+                   f"(cap {settings.max_positions_per_ticker} per ticker)")
+```
+
+Membership answers "any?"; the cap asks "how many?". So the setting behaved as 1
+whatever it was set to, and the refusal message read the configured value back
+to you while ignoring it -- the most expensive shape a bug can take, because the
+output agrees with the setting. Setting it to 5 changed a sentence.
+
+Now `Ledger.ticker_counts()` mirrors `sector_counts()` and the gate compares a
+count, in `pv.ticker_counts` and in `pending` both, so a batch cannot build a
+ladder past the cap one proposal at a time.
+
+**A ticker has exactly one GICS sector, so `max_positions_per_sector` is the
+ceiling the per-ticker cap can ever reach.** At a sector cap of 2, a per-ticker
+cap of 5 still tops out at 2 -- raising only the per-ticker number looks like it
+permits a deeper ladder and does not. `test_the_sector_cap_is_the_real_ceiling_on_a_ladder`
+pins it so nobody re-derives that at the console.
+
+Above a cap of 1 the watchlist's `HOLDING` also stopped meaning what it said.
+It was set on `symbol in held`, which was the same statement as "cannot take
+more" only while the cap was 1; above that it hid a permitted add behind a
+status that reads as nothing-to-do. `HOLDING` now means *at the cap*, and
+`Entry.held` carries the count.
+
+---
+
+## 40. A stop without a cooldown is a churn machine
+
+The GOOGL stop-out (§38) had a second half nobody had noticed. The name was
+stopped out at 13:50 and **re-proposed as a fresh open in the same run**,
+blocked only because the master trading switch happened to be off. Nothing in
+the risk manager stood between a stop firing and the same name being reopened.
+
+`max_positions_per_ticker` is not that rule and never was: it caps what the
+account HOLDS at one time and says nothing about re-entering after a close.
+
+Why it matters most in exactly the case a stop is least trustworthy: a stop acts
+on a mark, and §38 is the record of a mark being wrong. Re-entering immediately
+re-establishes the same risk at a worse price, so one bad print gets paid for
+twice. Waiting a few days costs at most one entry in a name that is one of
+several hundred candidates.
+
+`reentry_cooldown_days = 5` (0 disables). `Ledger.cooling_off()` returns
+`{symbol: date it clears}`, and the rule is deliberately about the RESULT, not
+the exit kind:
+
+- **Losses only.** A take-profit close leaves nothing to cool off from --
+  selling premium again in a name that just paid out is the strategy working.
+- **Beyond a dollar.** `LOSS_FLOOR = -0.5`, the same line `learning._result`
+  draws between LOSS and SCRATCH. A $0.12 fee-only close is not this loss.
+- **Most recent close binds**, or an old loss makes a fresh one look served.
+- **Fails open** on an unreadable timestamp. Benching a name permanently
+  because of a malformed string is worse than missing one cooldown.
+
+Enforced in **two** places, and the second is the one that matters:
+
+1. `risk.check` -- so the ticket and the watchlist say why, rather than showing
+   `READY` on a name the agent would refuse.
+2. `paper_broker.open_approved` (`CoolingOff`) -- because this is the only gate
+   that sees the present. A proposal carries the verdict it was given when it
+   was written, so a ticket produced at 13:00 still reads `risk_ok` after a stop
+   fires at 13:50. That is the exact sequence, and `risk.check` alone would not
+   have caught it.
+
+**Every gate added to the opening path has to be checked against the exit
+path.** A rule that blocked a close would turn a delay into an unbounded loss.
+`apply_exits` does not route through `open_approved` at all, so this is
+structurally impossible -- and `test_a_cooldown_can_never_hold_a_losing_position_open`
+pins it rather than leaving it to be re-reasoned.
+
+---
+
+## 41. The screen's own conditions finally survive the fill
+
+`feature_gaps()` used to name four things the ledger never wrote down. Two of
+them -- % off the 52-week high and % from the 50dma -- are *the entire screen*.
+The journal could say how every trade ended and nothing about whether the setup
+that picked it was worth picking.
+
+They are recorded now, on `Position` and on `Outcome`:
+`pct_off_high_at_open`, `pct_from_dma50_at_open`, `short_delta_at_open`,
+`iv_at_open`. Delta and IV were already computed during sizing and thrown away
+at fill; the two screen numbers live on `Candidate`, which does not reach the
+broker, so they ride on `Proposal` -- the only thing that survives between
+`propose` and `approve` -- and are passed into `open_approved`.
+
+Three things this got right that are worth not undoing:
+
+**`None`, not `0.0`.** `0.0` is a real reading: a stock exactly at its 52-week
+high. A trade opened before the field existed must be distinguishable from one
+measured at zero, so `_split` filters `None` before comparing. Without that
+filter every pre-change row lands in the low bucket and the agent invents a
+pattern out of the date a field was added.
+`test_a_missing_feature_is_never_read_as_a_zero` is the guard.
+
+**`abs(None)` raises inside the filter.** `_split` has to *call* the key to test
+its result, so the None-safety has to be in the key: hence `_abs()`.
+
+**Delta reports, and suggests nothing.** `_compare` prints its `config --set`
+line only when the HIGH side wins, and high on the delta split is the NEAR
+strike -- so a win for near strikes would have printed "widen the cushion", the
+opposite of what the record just said. The cushion lesson already owns
+`min_otm_cushion` and splits the right way round.
+
+What is genuinely still missing is **IV rank**, and the reason is worth keeping:
+a rank needs a year of implied-vol history per name and nothing collects one.
+Absolute IV cannot tell 40% in a quiet name from 40% in a jumpy one. Realized
+vol from the price history we already fetch is a *different* measurement and
+labelling it "IV rank" would be the exact dishonesty this file exists to avoid.
+
+`feature_gaps(journal)` now counts rather than describes: how many closed trades
+predate each feature, because those rows are dropped from its comparison. The
+sample that can speak to the screen is smaller than the sample overall until the
+book turns over.

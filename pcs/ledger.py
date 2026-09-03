@@ -36,6 +36,11 @@ from .config import LEDGER_JSON, Settings
 
 OPEN, CLOSED, EXPIRED = "open", "closed", "expired"
 
+# A close inside a dollar either way is fees, not a result -- the same line
+# `learning._result` draws between LOSS and SCRATCH. A $0.12 fee-only close is
+# not the loss the re-entry cooldown exists for.
+LOSS_FLOOR = -0.5
+
 
 @dataclass
 class Position:
@@ -68,6 +73,20 @@ class Position:
     basis: str = "live"          # "live" (real chain) | "modeled" (Black-Scholes)
     source: str = ""             # which provider the chain came from
     quote_quality: str = ""      # session grade at fill: live|closing_snapshot|stale
+
+    # What was true about the name when the trade was opened. These are the two
+    # conditions the whole screen is built on plus the two numbers that describe
+    # the strike chosen -- and until now none of them survived the fill, so the
+    # journal could measure how a trade ENDED but nothing about why it was
+    # picked. They can only ever be learned from trades opened after this
+    # existed, which is why they are recorded at the cheapest possible moment.
+    #
+    # None means NOT RECORDED, and that is the point of the type: a position
+    # opened before this change must not read as "0% off its high".
+    pct_off_high_at_open: float | None = None      # (high - spot) / high
+    pct_from_dma50_at_open: float | None = None    # signed: (spot - dma50) / dma50
+    short_delta_at_open: float | None = None       # computed while sizing
+    iv_at_open: float | None = None                # short-leg implied vol
 
     @property
     def max_loss(self) -> float:
@@ -298,6 +317,55 @@ class Ledger:
         out: dict[str, int] = {}
         for p in self.open_positions:
             out[p.sector] = out.get(p.sector, 0) + 1
+        return out
+
+    def ticker_counts(self) -> dict[str, int]:
+        """Open positions per symbol.
+
+        A count, not a set. `max_positions_per_ticker` above 1 is meaningless
+        against a set -- membership answers "any?", and the cap asks "how
+        many?". The risk gate held a set and compared it with `in`, so the
+        setting printed its own number in the refusal message while behaving as
+        1 whatever it was set to.
+        """
+        out: dict[str, int] = {}
+        for p in self.open_positions:
+            out[p.symbol] = out.get(p.symbol, 0) + 1
+        return out
+
+    def cooling_off(self, settings: Settings,
+                    today: dt.date | None = None) -> dict[str, str]:
+        """Symbols too recently closed at a loss to re-enter -> the date each clears.
+
+        The gap this fills: `max_positions_per_ticker` stops the account
+        HOLDING two spreads on a name at once. Nothing stopped it re-opening
+        one minutes after a stop fired, and the agent did exactly that -- GOOGL
+        was stopped out at 13:50 and re-proposed the same run, blocked only
+        because the master switch happened to be off.
+
+        That matters most in the case a stop is least trustworthy. A stop reads
+        a mark, and a mark can be wrong; re-entering immediately re-establishes
+        the same risk at a worse price, so one bad print gets paid for twice.
+        Waiting a few days costs at most one entry in a name that is one of
+        several hundred candidates.
+
+        Losses only. A take-profit close leaves nothing to cool off from.
+        """
+        days = settings.reentry_cooldown_days
+        if days <= 0:
+            return {}
+        today = today or dt.date.today()
+        out: dict[str, str] = {}
+        for p in self.closed_positions:
+            if p.realized_pl >= LOSS_FLOOR or not p.closed_at:
+                continue
+            try:
+                closed = dt.date.fromisoformat(p.closed_at[:10])
+            except ValueError:
+                continue          # an unparseable stamp must not bench forever
+            clear = (closed + dt.timedelta(days=days)).isoformat()
+            if clear > today.isoformat() and clear > out.get(p.symbol, ""):
+                out[p.symbol] = clear
         return out
 
     def by_id(self, pid: str) -> Position | None:

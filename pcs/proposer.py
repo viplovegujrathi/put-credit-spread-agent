@@ -32,6 +32,13 @@ class Proposal:
     risk_warnings: list[str] = field(default_factory=list)
     earnings_date: str | None = None
     earnings_note: str = ""
+    # The two screen conditions that selected this name, carried so they reach
+    # the fill. `rationale` renders both as prose and prose is not a record --
+    # the position needs the numbers, and this file is the only thing that
+    # survives between `propose` and `approve`. Defaulted to None so a
+    # proposals.json written before this change still loads.
+    pct_off_high: float | None = None
+    pct_from_dma50: float | None = None
     status: str = "pending"          # pending | approved | rejected | expired
     approved_by: str = ""
     approved_at: str = ""

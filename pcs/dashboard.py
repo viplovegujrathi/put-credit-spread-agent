@@ -1306,12 +1306,15 @@ def _learning_panel(settings: Settings) -> str:
             f'<span class="tag">n={les.sample}</span></h3>'
             f"<p>{_e(les.finding)}</p>{fix}</div>")
 
-    gaps = "".join(f"<li>{_e(g)}</li>" for g in learning.feature_gaps())
+    gaps = "".join(f"<li>{_e(g)}</li>" for g in learning.feature_gaps(j))
     body.append(
         f"<h2>Not learnable yet</h2>"
-        f'<div class="rules"><div class="devf" style="margin:0 0 8px">These were '
-        f"never written down at open, so their absence from the findings above "
-        f'means "unmeasured", not "no effect".</div><ul>{gaps}</ul></div>')
+        f'<div class="rules"><div class="devf" style="margin:0 0 8px">Absence '
+        f'from the findings above means &ldquo;unmeasured&rdquo; here, not '
+        f"&ldquo;no effect&rdquo;. Where a count is given, those trades were "
+        f"opened before the ledger recorded the feature and are dropped from "
+        f"its comparison rather than counted as zero.</div>"
+        f"<ul>{gaps}</ul></div>")
     return "".join(body)
 
 
