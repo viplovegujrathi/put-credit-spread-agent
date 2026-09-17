@@ -227,7 +227,7 @@ border-left:3px solid transparent}
 .agemark{font-size:11px;margin-top:3px;font-variant-numeric:tabular-nums}
 .agemark.fresh{color:var(--dim)}
 .agemark.aging{color:var(--warn)}
-.agemark.stale,.agemark.never{color:var(--neg);font-weight:650}
+.agemark.stale,.agemark.never,.agemark.refused{color:var(--neg);font-weight:650}
 /* Distance from spot to the short strike. */
 .cush{font-weight:650;font-variant-numeric:tabular-nums}
 .cush.ok{color:var(--pos)}
@@ -585,7 +585,8 @@ _DESC_FIRST = frozenset({"premium", "return", "cushion", "off high", "credit",
                          "p&l"})
 
 
-def _mark_state(p: Position, sess: SessionState | None) -> tuple[str, str]:
+def _mark_state(p: Position, sess: SessionState | None,
+                refused: frozenset[str] = frozenset()) -> tuple[str, str]:
     """How much the price behind this row can be trusted, and how to say it.
 
     Every headline number on the page -- net liq, unrealised P&L, cost to close,
@@ -602,6 +603,19 @@ def _mark_state(p: Position, sess: SessionState | None) -> tuple[str, str]:
         txt = f"marked {age / 60:.0f}h ago"
     else:
         txt = f"marked {age / 1440:.0f}d ago"
+    # Recorded, not re-derived. The last mark run attempted this position and
+    # could not price it -- and its PREVIOUS mark may be ninety seconds old and
+    # perfectly good, which is why `marked_at` cannot answer this and why only
+    # the run that made the attempt knows (LEARNING.md 21, which says exactly
+    # this and built `stale_ids` to carry it).
+    #
+    # Without the join the row renders `fresh` and the pill below it promises an
+    # exit the agent has already declined to decide, while the alert banner at
+    # the top of the same page says the position failed to re-price. This is a
+    # consequence of cb6e8a1: refusing to mark deliberately leaves `marked_at`
+    # alone so a bad mark cannot look fresh, and nothing taught the row.
+    if p.id in refused:
+        return "refused", f"{txt} \u00b7 would not re-price"
     trading = bool(sess and sess.is_open)
     if trading and age > health.MARK_MISSING_AFTER_MIN:
         return "stale", txt
@@ -643,6 +657,11 @@ def _exit_pill(p: Position, d, mark: str, sess: SessionState | None,
     market is shut, or never decided at all because the mark was stale. Those
     are three different amounts of trouble.
     """
+    if mark == "refused":
+        return ('<span class="tag stale">NOT DECIDED</span>'
+                '<div class="note">the last mark run could not price this spread, '
+                'so no exit rule was evaluated on it. The age above is the '
+                'previous good mark, not a current one.</div>')
     if mark in ("stale", "never"):
         return ('<span class="tag stale">NOT DECIDED</span>'
                 '<div class="note">the mark behind this row is stale, so no exit '
@@ -771,8 +790,17 @@ def _heartbeat(led: Ledger, hb: health.Health, sess: SessionState,
             when = f"{age / 60:.0f}h ago"
         else:
             when = f"{age / 1440:.0f}d ago"
-        bad = (kind == "mark" and sess.is_open and led.open_positions
-               and age is not None and age > health.MARK_MISSING_AFTER_MIN)
+        # A session-aware THRESHOLD, not a session-aware alarm. Forty minutes
+        # is stale at 11:00 and completely normal overnight (LEARNING.md 22) --
+        # but requiring `sess.is_open` made the alarm impossible to raise outside
+        # RTH at all, so a loop last seen five days ago printed in the calm style
+        # at a weekend, which is exactly when a once-a-day reader opens this
+        # page. Overnight it now uses the same 24h line `_mark_state` already
+        # applies to the rows, so the heartbeat and the `agemark` below it stop
+        # contradicting each other on one screen.
+        limit = health.MARK_MISSING_AFTER_MIN if sess.is_open else 60 * 24
+        bad = (kind == "mark" and led.open_positions
+               and age is not None and age > limit)
         cls = "hb-bad" if bad else "hb-ok"
         tail = ("from the ledger" if from_ledger else f"{n} today")
         bits.append(f'<span class="hb-item"><b>{label}</b> '
@@ -886,15 +914,17 @@ def _money_story(led: Ledger) -> str:
 
 
 def _positions_table(rows: list[Position], settings: Settings,
-                     sess: SessionState | None = None) -> str:
+                     sess: SessionState | None = None,
+                     refused: frozenset[str] = frozenset()) -> str:
     if not rows:
         return '<div class="empty">No open positions.</div>'
     out = []
     for p in rows:
         d = decide(p, settings)
-        mark, age_txt = _mark_state(p, sess)
+        mark, age_txt = _mark_state(p, sess, refused)
         pill = _exit_pill(p, d, mark, sess, settings)
-        note = d.reason if (d.reason and mark not in ("stale", "never")) else ""
+        note = (d.reason if (d.reason and mark not in ("stale", "never", "refused"))
+                else "")
         spot = (f"${p.mark_spot:,.2f}" if p.mark_spot
                 else '<span class="dim">&mdash;</span>')
         be_gap = ((p.mark_spot - p.breakeven) / p.mark_spot) if p.mark_spot else None
@@ -1379,6 +1409,11 @@ def render(led: Ledger, props: list[Proposal], settings: Settings,
         pending_txt = "opened automatically on the next run"
     sectors = ", ".join(f"{k} x{v}" for k, v in sorted(led.sector_counts().items())) or "none"
     hb = health.load()
+    # Which rows the newest mark run could not price. A run written before
+    # `stale_ids` existed carries none, so the join degrades to the old
+    # behaviour rather than flagging rows it cannot vouch for.
+    last_mark = hb.last("mark")
+    refused = frozenset(last_mark.stale_ids if last_mark else ())
     wl = watchlist.load()
     watch_at = wl.generated_at if wl else ""
     alerts = health.alerts(led, settings, hb, sess, watch_at=watch_at)
@@ -1486,7 +1521,7 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 <div class="cards">{card_html}</div>
 
 <h2>Open positions</h2>
-{_positions_table(led.open_positions, settings, sess)}
+{_positions_table(led.open_positions, settings, sess, refused)}
 
 <h2>Pending proposals &mdash; {pending_txt}</h2>
 {_proposals_table(props)}

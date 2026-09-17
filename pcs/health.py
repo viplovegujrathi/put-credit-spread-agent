@@ -72,6 +72,12 @@ class Run:
     # may still carry a perfectly good mark from yesterday, so `marked_at` does
     # not identify it. Only the run that attempted the mark knows.
     stale_symbols: list[str] = field(default_factory=list)
+    # The same fact by position id, because the symbol is no longer specific
+    # enough: `max_positions_per_ticker` is above 1, so one name can hold a
+    # ladder whose near strike prices and whose far strike does not. The banner
+    # names symbols because a reader thinks in names; the ROW needs the id or it
+    # would flag a position that marked perfectly well.
+    stale_ids: list[str] = field(default_factory=list)
 
     @property
     def when(self) -> dt.datetime | None:

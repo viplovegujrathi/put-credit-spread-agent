@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 413 tests, ruff clean.
+- 437 tests, ruff clean.
 
 ---
 
@@ -1108,3 +1108,83 @@ labelling it "IV rank" would be the exact dishonesty this file exists to avoid.
 predate each feature, because those rows are dropped from its comparison. The
 sample that can speak to the screen is smaller than the sample overall until the
 book turns over.
+
+
+---
+
+## 42. Every one of these was already written down
+
+Five defects landed in one commit and they share a shape worth more than any of
+them individually: **the lesson was recorded, the code obeyed it in one place,
+and violated it in another.** A lesson in this file is not evidence the code
+follows it. Grep for the second call site.
+
+| the rule | honoured at | broken at |
+|---|---|---|
+| an approver is a person, never a permission | `Settings.auto_approver` | `--approver`, unvalidated |
+| a decision is worth what the measurement under it is worth (38) | `cost_to_close`, after cb6e8a1 | expiry settlement, one branch above it |
+| a machine check must not depend on prose (24) | the nginx marker, fixed | `"stop_loss" in close_reason` |
+| record the stale symbols, do not re-derive them (21) | the alert banner | the position row |
+| stale is a property of the reader (22) | `_mark_state` | `_heartbeat` |
+
+### The approver field was carrying a standing permission
+
+`data/ledger.json` records `approved_by: "viplove (blanket paper approval)"` on
+every fill. That field is the entire audit trail for the human gate. Read back
+later it asserts a human reviewed *this* trade; what happened is that a human
+reviewed the idea of trades, once. It is the same laundering this file is
+forbidden from doing with consent, performed on the ledger instead -- and the
+method directly above the branch that accepted it already states the rule.
+
+`Settings.validate_approver` refuses it and names `auto_approve`, which is what
+the writer actually wanted, already exists, is already on, and records an honest
+marker. The existing rows keep the string: a ledger is append-only history and
+correcting it retroactively would be the same lie in the other direction.
+
+### Settlement is the biggest number a row ever books
+
+`mark_positions` settled expired positions against `spot or pos.mark_spot`. For
+a vertical, settlement is max profit or max loss and nothing between, off one
+comparison -- and an expired row is never re-priced, so booking it wrong is
+permanent. `cb6e8a1` put an honesty guard on the option mark; this branch sits
+above the guard and went around it. It now refuses to settle without a spot from
+the current run, which only delays: the position stays open, stays out of
+`fresh`, and settles on the next run that has one.
+
+### Two stop-loss settings, and which one governs depends on the width
+
+Extending 38.3, with the arithmetic rather than the one example. Stop one fires
+at a loss of `credit x (mult - 1)`; the backstop at `pct x (width - credit)`.
+They cross at **credit = 33% of width** (mult 2.0, pct 0.50):
+
+* `$5` and `$10` widths clear the `$100` credit floor at 10-20% of width, so the
+  credit multiple governs and fires near **30%** of max loss.
+* `$1` and `$2.50` widths *cannot* clear `$100` without credit above 33% of
+  width, so the backstop governs and fires at **50%**.
+
+So the effective stop is not a constant across the book -- it is 30% or 50% of
+max loss depending on which width the optimizer happened to pick, and nothing on
+the page or in the ticket says which one is live for a given position. Recorded
+as a fact, not acted on: changing either number is a strategy change, and the
+closed record cannot support one.
+
+### What the record can and cannot say about profitability
+
+One closed trade, and 38 established it was priced wrong. `learning.py` will not
+draw a conclusion under 8 closed trades with 4 per side and a 20-point win-rate
+gap, which is correct. The four entry features landed at `13e3a28`, so only
+trades opened after it can ever feed those lessons -- the two open positions
+read `None` and always will. IV rank remains the one absolutely unrecorded
+feature, and a put credit spread is a short-volatility position, so whether it
+was sold into rich or cheap IV is the most load-bearing unmeasured fact about
+every entry in this account.
+
+### Arming state, unchanged this session
+
+`paper_trading on`, `auto_approve on` (paper only), `auto_exit on`, `mode paper`.
+Nothing was armed or disarmed. Standing deviation from the skill baseline, set by
+the user before this session: per-trade human approval OFF for paper.
+
+Still declined, still standing: changing the stop-loss parameters on the strength
+of one trade. Still open: whether the GOOGL loss should count as a strategy
+signal in `journal.outcomes` at all (38) -- flagged, record untouched.

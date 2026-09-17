@@ -180,6 +180,16 @@ _OVERRIDABLE = ("max_collateral_per_trade", "min_credit_per_trade",
 # --------------------------------------------------------------------------
 # Tier 2: portfolio + operations (user-settable)
 # --------------------------------------------------------------------------
+# Words that turn an approver into a standing permission instead of a person.
+# See `Settings.validate_approver`. A heuristic, deliberately not airtight: it
+# catches the one mistake that has actually been made, at the moment it is made.
+STANDING_CONSENT: tuple[str, ...] = (
+    "blanket", "standing", "pre-approv", "preapprov", "pre approv",
+    "auto-approv", "auto approv", "autoapprov", "in advance", "carte blanche",
+    "all trades", "any trade", "every trade", "always", "whatever",
+)
+
+
 @dataclass
 class Settings:
     # --- account ----------------------------------------------------------
@@ -374,6 +384,54 @@ class Settings:
         a trade nobody looked at is worse than no audit trail.
         """
         return "agent (auto-approve, paper)"
+
+    def validate_approver(self, who: str) -> str:
+        """Check a `--approver` value. Returns "" to accept, or why to refuse.
+
+        `approved_by` answers exactly one question: which person looked at THIS
+        trade. It is the entire audit trail for the human gate, so a value that
+        answers some other question does not merely read oddly -- it destroys
+        the only evidence that the gate was ever honoured.
+
+        The value this exists to catch is real and is in the ledger:
+        `viplove (blanket paper approval)`. That is a STANDING PERMISSION
+        written into a per-trade field. Read back later it says a human reviewed
+        every fill; what happened is that a human reviewed the idea of fills,
+        once. It is the same laundering LEARNING.md is forbidden from doing with
+        consent, performed on the ledger instead -- and `auto_approver` one
+        method up already states the principle ("never a person's name") for the
+        path that cannot violate it, while the path that can validated nothing.
+
+        It is also not what the writer needed. Wanting the agent to fill paper
+        trades unattended is `auto_approve`: it exists, it is already on, and it
+        records an honest marker. So the refusal names that mechanism rather
+        than just saying no.
+
+        This is not a security control. Nothing here stops a human typing their
+        own name without looking at the trade, and nothing could.
+        """
+        who = who.strip()
+        if not who:
+            return "an approver is required -- the ledger records who looked at this trade"
+        if len(who) > 64:
+            return ("that is too long to be a name. `approved_by` records WHO "
+                    "approved, not why or under what authority")
+        if who == self.auto_approver():
+            return (f"{who!r} is the agent's own auto-approval marker and cannot be "
+                    "typed by hand -- an unattended fill and a human sign-off have "
+                    "to stay tellable apart in the record")
+        low = who.lower()
+        hit = next((w for w in STANDING_CONSENT if w in low), None)
+        if hit:
+            return (
+                f"{who!r} reads as a standing permission ({hit!r}), not as the "
+                "person who approved this trade. Recorded there it claims a human "
+                "reviewed this fill.\n"
+                "    to approve THIS trade:  --approver \"<your name>\"\n"
+                "    to let the agent fill paper trades unattended: that is "
+                f"auto_approve (currently {'on' if self.auto_approve else 'off'}), "
+                f"and it records {self.auto_approver()!r}")
+        return ""
 
     @classmethod
     def load(cls, path: Path | None = None,

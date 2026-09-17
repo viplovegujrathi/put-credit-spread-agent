@@ -17,7 +17,7 @@ import datetime as dt
 from .chains import PutChain, PutQuote, get_chain
 from .config import STRATEGY, Settings
 from .exits import ExitDecision, review
-from .ledger import EXPIRED, Ledger, Position, new_id
+from .ledger import CLOSE_EXPIRED, EXPIRED, Ledger, Position, new_id
 from .optimizer import Spread
 from .session import SessionState, slippage_frac, state_for
 
@@ -262,8 +262,26 @@ def mark_positions(ledger: Ledger, settings: Settings, spots: dict[str, float]
     for pos in list(ledger.open_positions):
         spot = spots.get(pos.symbol, 0.0)
         if dt.date.fromisoformat(pos.expiration) < today:
-            debit, reason = settle_expired(pos, spot or pos.mark_spot)
-            ledger.close_position(pos, debit, reason, fees=0.0, status=EXPIRED)
+            # Settlement books the largest number a row ever carries: for a
+            # vertical it is max profit or max loss and nothing in between, off
+            # one comparison against one spot. This used to fall back to
+            # `pos.mark_spot` -- a stored price of unknown age -- which is the
+            # exact shape of the GOOGL loss (LEARNING.md 38): a correct decision
+            # executed on a measurement nobody checked. `cb6e8a1` put that guard
+            # on the option mark; this branch sits above it and went around it.
+            #
+            # Refusing is the lenient failure here too. The position stays open,
+            # stays out of `fresh`, is reported under "could not decide", and
+            # settles on the next run that has a real spot -- or a human closes
+            # it by hand. Booking it wrong is permanent: an expired row is never
+            # re-priced, and nothing downstream ever revisits it.
+            if not spot:
+                notes.append((pos, f"could not settle: expired {pos.expiration} "
+                                   f"and no spot for {pos.symbol} this run"))
+                continue
+            debit, reason = settle_expired(pos, spot)
+            ledger.close_position(pos, debit, reason, fees=0.0, status=EXPIRED,
+                                  action=CLOSE_EXPIRED)
             notes.append((pos, reason))
             continue
         chain = get_chain(pos.symbol, settings.chain_source, expiration=pos.expiration,
@@ -314,7 +332,8 @@ def apply_exits(ledger: Ledger, settings: Settings, fresh: set[str] | None = Non
         if not d.act:
             continue
         fees = round(settings.per_contract_fees * pos.contracts, 2)
-        ledger.close_position(pos, d.debit, f"{d.action}: {d.reason}", fees=fees)
+        ledger.close_position(pos, d.debit, f"{d.action}: {d.reason}", fees=fees,
+                              action=d.action)
         ledger.log("auto_exit", id=pos.id, symbol=pos.symbol, action=d.action,
                    debit=d.debit, realized_pl=pos.realized_pl, decided_by="agent")
         acted.append((pos, d))

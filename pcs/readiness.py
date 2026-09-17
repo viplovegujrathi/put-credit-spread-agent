@@ -23,7 +23,8 @@ import datetime as dt
 from dataclasses import dataclass
 
 from .config import Settings
-from .ledger import Ledger
+from .exits import DEFEND, STOP_LOSS
+from .ledger import LOSS_FLOOR, Ledger
 
 
 @dataclass
@@ -78,9 +79,23 @@ def _stale(stamp: str, days: int = 7) -> bool:
 def assess(led: Ledger, settings: Settings) -> Readiness:
     closed = led.closed_positions
     wins = [p for p in closed if p.realized_pl > 0]
-    losses = [p for p in closed if p.realized_pl <= 0]
+    # `LOSS_FLOOR` is the ledger's own line between a loss and a scratch, and
+    # `learning._result` already draws it. Drawing a second one here (`<= 0`)
+    # let a twelve-cent fee-only close satisfy the criterion whose entire job is
+    # to prove the downside path has been exercised. One value, one home
+    # (LEARNING.md 26). A scratch still counts in the win-rate denominator,
+    # which is the strict direction and stays.
+    losses = [p for p in closed if p.realized_pl <= LOSS_FLOOR]
+    scratches = [p for p in closed if LOSS_FLOOR < p.realized_pl <= 0]
     win_rate = len(wins) / len(closed) if closed else 0.0
-    reasons = " ".join(p.close_reason for p in closed)
+    # Structured, not prose. This was `"stop_loss" in " ".join(close_reason)` --
+    # a substring search over free text that `close --reason` writes verbatim,
+    # so the check could be satisfied by typing the words into a manual close.
+    # `close_action` is written by whichever code path actually closed the
+    # position (LEARNING.md 24: a machine check must not depend on prose, and
+    # this one gates real money where the nginx marker only gated a redeploy).
+    stopped = [p for p in closed if p.close_action in (STOP_LOSS, DEFEND)]
+    unproven = [p for p in closed if not p.close_action]
 
     need_n = settings.min_closed_trades_for_live
     need_wr = settings.min_win_rate_for_live
@@ -115,12 +130,16 @@ def assess(led: Ledger, settings: Settings) -> Readiness:
             "A loss has actually been taken",
             bool(losses),
             (f"{len(losses)} losing trade(s) -- the downside is real and measured"
-             if losses else "every closed trade won; the loss path is untested")),
+             if losses
+             else f"{len(scratches)} closed inside ${abs(LOSS_FLOOR):.2f} of flat -- "
+                  "fees are not a loss" if scratches
+             else "every closed trade won; the loss path is untested")),
         Criterion(
             "A stop or defend has fired at least once",
-            "stop_loss" in reasons or "defend" in reasons,
-            ("the exit engine has cut a position for real"
-             if "stop_loss" in reasons or "defend" in reasons
+            bool(stopped),
+            ("the exit engine has cut a position for real" if stopped
+             else f"no stop recorded; {len(unproven)} closed trade(s) predate the "
+                  "field and cannot be checked" if unproven
              else "no stop has ever fired -- the mechanism is unproven here")),
         Criterion(
             "Sized on a live market, not a closing snapshot",

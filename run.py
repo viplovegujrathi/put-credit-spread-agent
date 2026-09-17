@@ -297,6 +297,14 @@ def cmd_approve(args, settings: Settings) -> int:
                   "human approval.")
             return 1
         approver = settings.auto_approver()
+    else:
+        # Only a value a human typed is checked. `auto_approver()` is the one
+        # string permitted to say "no person looked at this", and it has to stay
+        # permitted on the branch above, which is the branch that produces it.
+        bad = settings.validate_approver(approver)
+        if bad:
+            print(f"refusing to record that approver: {bad}")
+            return 1
 
     led = ledger_mod.Ledger.load(settings)
     sess = session.state_for(settings)
@@ -428,6 +436,7 @@ def cmd_mark(args, settings: Settings) -> int:
     health.record(
         "mark", positions=len(led.open_positions) + taken_n, marked=len(fresh),
         stale=len(unpriced), stale_symbols=sorted({p.symbol for p, _ in unpriced}),
+        stale_ids=sorted(p.id for p, _ in unpriced),
         exits_due=len(actionable) + len(skipped),
         exits_taken=taken_n, exits_held=held_n, exits_skipped=len(skipped),
         held_detail=[f"{p.symbol} {d.headline}: {d.reason[:120]}"
@@ -574,7 +583,8 @@ def cmd_close(args, settings: Settings) -> int:
         print("could not price the close; pass --debit to override.")
         return 1
     fees = round(pos.fees_paid, 2)
-    led.close_position(pos, debit, args.reason, fees=fees)
+    led.close_position(pos, debit, args.reason, fees=fees,
+                       action=ledger_mod.CLOSE_MANUAL)
     led.save()
     print(f"closed {pos.id} {pos.symbol} {pos.short_strike:g}/{pos.long_strike:g}p "
           f"for a ${debit * 100 * pos.contracts:,.0f} debit -> realized "

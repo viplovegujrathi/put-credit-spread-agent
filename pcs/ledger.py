@@ -41,6 +41,17 @@ OPEN, CLOSED, EXPIRED = "open", "closed", "expired"
 # not the loss the re-entry cooldown exists for.
 LOSS_FLOOR = -0.5
 
+# What closed a position, as a value a machine can compare rather than a
+# sentence a machine has to search. `close_reason` stays prose for the reader;
+# every automated check reads this. See LEARNING.md 24 -- the nginx marker that
+# a header rewrite silently invalidated was this same mistake, and the go-live
+# gate is a more load-bearing check than that one was.
+CLOSE_MANUAL = "manual"      # a human ran `close`
+CLOSE_EXPIRED = "expired"    # settled at expiration
+# Exit-engine closes record `exits.ExitDecision.action` verbatim (take_profit,
+# stop_loss, defend, roll). Those constants live in `exits`, which imports this
+# module, so they are not re-declared here.
+
 
 @dataclass
 class Position:
@@ -67,6 +78,10 @@ class Position:
     close_debit: float = 0.0          # per share
     realized_pl: float = 0.0          # dollars, net of fees
     close_reason: str = ""
+    # Which code path closed it: one of the CLOSE_* constants above, or an
+    # `exits` action. Empty on a row closed before this field existed, and that
+    # emptiness is meaningful -- "not recorded" is not "not a stop".
+    close_action: str = ""
     fees_paid: float = 0.0
     proposal_id: str = ""
     approved_by: str = ""
@@ -386,17 +401,20 @@ class Ledger:
         return pos
 
     def close_position(self, pos: Position, debit: float, reason: str,
-                       fees: float = 0.0, status: str = CLOSED) -> Position:
+                       fees: float = 0.0, status: str = CLOSED,
+                       action: str = "") -> Position:
         cost = round(debit * 100 * pos.contracts + fees, 2)
         self.cash = round(self.cash - cost, 2)
         pos.close_debit = debit
         pos.closed_at = dt.datetime.now().isoformat(timespec="seconds")
         pos.close_reason = reason
+        pos.close_action = action
         pos.status = status
         pos.fees_paid = round(pos.fees_paid + fees, 2)
         pos.realized_pl = round(pos.credit_dollars - cost, 2)
         self.log("position_closed", id=pos.id, symbol=pos.symbol, reason=reason,
-                 debit=debit, realized_pl=pos.realized_pl, status=status)
+                 action=action, debit=debit, realized_pl=pos.realized_pl,
+                 status=status)
         return pos
 
 
