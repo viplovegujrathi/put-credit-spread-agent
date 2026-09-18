@@ -1188,3 +1188,54 @@ the user before this session: per-trade human approval OFF for paper.
 Still declined, still standing: changing the stop-loss parameters on the strength
 of one trade. Still open: whether the GOOGL loss should count as a strategy
 signal in `journal.outcomes` at all (38) -- flagged, record untouched.
+
+
+---
+
+## 43. A command with no `ssh` in it is a laptop command
+
+The redeploy in `COMMANDS.md` was a bare fenced block:
+
+```
+cd ~/put-credit-spread-agent && git pull && sudo ./deploy/bootstrap.sh
+```
+
+Correct on the box, and it lived under a heading that said "Running on the
+server" — which is a property of the *document*, not of the text you copied out
+of it. Pasted into a laptop shell it failed twice on `cd`, and only because the
+box's clone is `put-credit-spread-agent` while the laptop's is
+`put-cedit-spread`. Same repo, two spellings, one of them a typo, and that typo
+is the entire reason `sudo bootstrap.sh` did not run against a Mac.
+
+Three things were relying on prose:
+
+* **`bootstrap.sh` said "Runs ON the EC2 instance" in a comment** and checked
+  only `id -u`. That is 15 again ("a comment is not a fact") and 24 again
+  ("a machine check must not depend on prose") — the location requirement was
+  stated in English and enforced by nothing. It now refuses on non-Linux. On
+  macOS it would have died at `apt-get` anyway, which means the old safety was
+  *luck about what is missing*, several steps in, after sudo was given.
+* **The box's identity was nowhere in the repo.** `deploy/push.sh` documents
+  `$1` as "an ssh host alias from ~/.ssh/config" and no such alias existed; the
+  instance had been deployed from a session whose knowledge left with it. Host,
+  user and key are now in `COMMANDS.md`.
+* **Every box command was shaped so it could be pasted anywhere.** They now
+  carry their own `ssh`, so the command is correct or it is nothing.
+
+### Two DuckDNS names, one instance
+
+`put-credit-spread.duckdns.org` and `ditm-robinhood.duckdns.org` are the same
+EC2 box (`ip-172-31-8-235`), which also runs the DITM Robinhood agent. The first
+SSH prints "the authenticity of host can't be established … this host key is
+known by the following other names" — that is the *benign* form of the message
+and means the key already matches a host you trust. The alarming form is a
+conflicting key for a name you have used before.
+
+`ssh-keygen -lf ~/.ssh/known_hosts` grouped by fingerprint is a machine
+inventory, and it settled this in one command: three distinct boxes behind six
+names, and the PCS box was neither of the two aliases in `~/.ssh/config`. Worth
+reaching for before guessing at keys.
+
+Login is `ubuntu` with `~/.ssh/rho-agent.pem` — the key pair is shared with
+`priya-live`, which is a *different* instance. An EC2 key pair serving several
+instances is why trying the keys you already have is a reasonable first move.

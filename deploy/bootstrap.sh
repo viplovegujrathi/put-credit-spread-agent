@@ -30,6 +30,14 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m!! %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[31m!! %s\033[0m\n' "$*" >&2; exit 1; }
 
+# This installer was pasted into a laptop shell twice before this check
+# existed. It only failed there because `apt-get` is not a thing on macOS --
+# i.e. by luck, several steps in, after sudo had already been given. The
+# hostname on the prompt is the only thing distinguishing the two shells, and
+# it is the one thing nobody reads.
+[ "$(uname -s)" = "Linux" ] || die "this installs ON the EC2 instance, not on \
+your laptop. From the laptop run: ./deploy/push.sh pcs"
+
 [ "$(id -u)" -eq 0 ] || die "run with sudo"
 
 # --- 1. packages ----------------------------------------------------------

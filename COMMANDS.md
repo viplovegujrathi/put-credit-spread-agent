@@ -339,6 +339,30 @@ python3 tools/rh_ingest.py              # 3. normalise into data/rh_chains/
 
 ## Running on the server
 
+### This box
+
+| | |
+|---|---|
+| Hostnames | `put-credit-spread.duckdns.org`, `ditm-robinhood.duckdns.org` |
+| Instance | `ip-172-31-8-235` |
+| Login | `ubuntu`, key `~/.ssh/rho-agent.pem` |
+| Clone | `~/put-credit-spread-agent` (the box's own git checkout) |
+| App | `/opt/pcs`, owned by `pcs` |
+
+Both hostnames are **one instance** — it also runs the DITM Robinhood agent. SSH
+says so the first time (`known_hosts` already has the key under the other name);
+that is expected, not a warning. `ssh-keygen -lf ~/.ssh/known_hosts` groups the
+names by host key if you ever need to prove which boxes are which.
+
+An alias makes every command below shorter:
+
+```
+Host pcs
+    HostName put-credit-spread.duckdns.org
+    User ubuntu
+    IdentityFile ~/.ssh/rho-agent.pem
+```
+
 Everything runs as `pcs` out of `/opt/pcs`:
 
 ```bash
@@ -368,12 +392,26 @@ sudo systemctl start pcs-watch.service && sudo journalctl -u pcs-watch.service -
 
 ### Redeploy
 
+From the laptop. Ships the working tree, bootstraps, then runs the suite on the
+box and prints the timers:
+
 ```bash
-cd ~/put-credit-spread-agent && git pull && sudo ./deploy/bootstrap.sh
+./deploy/push.sh pcs
+```
+
+To deploy what is on `origin/main` instead of what is in front of you, drive the
+box's own clone — note that this is one command **including its ssh**, because a
+bare `cd ~/put-credit-spread-agent && ...` block is indistinguishable from a
+local command once it is on the clipboard:
+
+```bash
+ssh -t pcs 'cd ~/put-credit-spread-agent && git pull && sudo ./deploy/bootstrap.sh'
 ```
 
 Idempotent. It never overwrites the box's ledger, proposals or settings, and runs
-the test suite before finishing.
+the test suite before finishing. `bootstrap.sh` refuses to run anywhere that is
+not Linux, so pasting it into the wrong shell fails immediately instead of
+several steps in.
 
 ### Logs
 
