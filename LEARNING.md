@@ -1127,19 +1127,26 @@ follows it. Grep for the second call site.
 | record the stale symbols, do not re-derive them (21) | the alert banner | the position row |
 | stale is a property of the reader (22) | `_mark_state` | `_heartbeat` |
 
-### The approver field was carrying a standing permission
+### The approver field could carry a standing permission
 
-`data/ledger.json` records `approved_by: "viplove (blanket paper approval)"` on
-every fill. That field is the entire audit trail for the human gate. Read back
-later it asserts a human reviewed *this* trade; what happened is that a human
-reviewed the idea of trades, once. It is the same laundering this file is
-forbidden from doing with consent, performed on the ledger instead -- and the
-method directly above the branch that accepted it already states the rule.
+**Corrected 2026-09-17 against the box.** The string
+`approved_by: "viplove (blanket paper approval)"` is in the **local dev copy**
+of `data/ledger.json` and has never been on the instance: all 18 live rows read
+`agent (auto-approve, paper)`, because `auto_approve` has been on throughout and
+`cmd_auto` always used `auto_approver()`. So this was a latent hole in the
+`approve` path, not a corrupted live record -- check the box before writing down
+what the record says.
+
+The hole was real. That field is the entire audit trail for the human gate, and
+`approve --approver` took any string at all. Read back later a standing
+permission there asserts a human reviewed *this* trade; what it records is that
+a human reviewed the idea of trades, once -- the same laundering this file is
+forbidden from doing with consent, performed on the ledger instead, while the
+method directly above the branch that accepted it already stated the rule.
 
 `Settings.validate_approver` refuses it and names `auto_approve`, which is what
-the writer actually wanted, already exists, is already on, and records an honest
-marker. The existing rows keep the string: a ledger is append-only history and
-correcting it retroactively would be the same lie in the other direction.
+such a string is reaching for and which already exists and records an honest
+marker.
 
 ### Settlement is the biggest number a row ever books
 
@@ -1239,3 +1246,71 @@ reaching for before guessing at keys.
 Login is `ubuntu` with `~/.ssh/rho-agent.pem` — the key pair is shared with
 `priya-live`, which is a *different* instance. An EC2 key pair serving several
 instances is why trying the keys you already have is a reasonable first move.
+
+---
+
+## 44. Thirteen closed trades, and the payoff needs 68% winners
+
+First read of a record big enough to say anything. Box, 2026-09-17: 13 closed,
+5 open, **+$11.79** realised on $3,000. `learning.lessons()` clears its floor of
+8 and reports nothing actionable on cushion or sector -- and that is not the
+interesting part.
+
+**8 wins, 5 losses, 61.5%. Break-even for this payoff is 67.9%.**
+
+| | per trade |
+|---|---|
+| average win | **+0.55 x credit** (take-profit at 50% of max credit, capturing 55%) |
+| average loss | **-1.16 x credit** (stop at 2x credit, i.e. buy back for twice what was sold) |
+| break-even win rate | **67.9%** measured, **66.7%** from the settings alone |
+| actual | 61.5% |
+
+The two exit settings *set* that number. Booking at 50% of the credit caps a win
+near half the credit while the stop lets a loss run to a full credit and past
+it, so the configuration needs two winners in three to stand still, by
+arithmetic and before any judgment about entries. Dropping the one pre-guard
+trade (GOOGL, 38) still leaves break-even at 64.6% against 61.5% delivered.
+
+Nothing in the agent displays this. The dashboard shows win rate and realised
+P&L, `readiness` gates on `min_win_rate_for_live = 0.60` -- a threshold **below**
+this configuration's own break-even -- and no screen anywhere says what win rate
+the current settings require. That is the gap worth closing before any parameter
+is touched: an account can pass its go-live gate while running a negative
+expectancy, and this one nearly did.
+
+### The stop fires on volatility, not only on direction
+
+Three of the five stops closed with the short strike **never breached**:
+
+| | cushion at close | stop |
+|---|---|---|
+| GOOGL | +3.1% | 2.8x credit (pre-guard, see 38) |
+| RDDT | +0.4% | 2.1x |
+| STX | **+5.4%** | backstop, 52% of max loss |
+| BA | -0.7% | 2.0x |
+| CLX | -6.0% | 2.1x |
+
+Only BA and CLX were actually in trouble. `cb6e8a1` reached the box on
+**2026-09-03**, so RDDT, STX, BA and CLX all stopped on marks that passed the
+two-sided-book test -- these are not the GOOGL plumbing failure repeating. A
+short vertical is short vega: an IV expansion can double the buy-back price with
+the underlying untouched, and a credit-multiple stop cannot tell that from a
+directional loss. STX is also the live confirmation of 42's crossover -- 42% of
+width in credit, so the 50%-of-max-loss backstop governed, exactly as predicted.
+
+### GOOG and GOOGL are one issuer and no cap sees it
+
+Both were open 2026-09-09 to 2026-09-14, $703.74 of collateral on Alphabet.
+`max_positions_per_ticker` counts symbols and `max_positions_per_sector` counts
+GICS labels (23); two share classes of one company defeat both. They happened to
+win. The exposure was single-name and invisible.
+
+### Every deploy was deleting the health record
+
+`/opt/pcs/data/health.json` did not exist on the box. `bootstrap.sh` rsyncs with
+`--delete` and its exclude list names ledger, proposals, settings, snapshots,
+last_screen, watchlist and journal -- not `health.json`. So the telemetry built
+in 21, 29 and 33 was wiped on every redeploy since it shipped, and **the
+cold-start fallback from 29 hid it**: absent record, `ledger_evidence()` fills
+in, page looks healthy. A graceful degradation that never announces itself is
+indistinguishable from the thing working. Added to both exclude lists.

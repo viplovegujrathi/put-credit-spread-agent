@@ -19,7 +19,8 @@ rsync -az --delete \
   --exclude '.pytest_cache' --exclude '.ruff_cache' --exclude 'logs' \
   --exclude 'data/ledger.json' --exclude 'data/proposals.json' \
   --exclude 'data/settings.json' --exclude 'data/snapshots.json' \
-  --exclude 'data/last_screen*.json' \
+  --exclude 'data/last_screen*.json' --exclude 'data/journal.json' \
+  --exclude 'data/watchlist.json' --exclude 'data/health.json' \
   "$ROOT"/ "$HOST":/tmp/pcs-src/
 
 echo "== bootstrapping"
