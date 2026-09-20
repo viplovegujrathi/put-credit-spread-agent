@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from . import universe
 from .chains import PutChain, PutQuote, get_chain
 from .config import STRATEGY, Settings
 from .exits import ExitDecision, review
@@ -55,6 +56,17 @@ class CoolingOff(OpenBlocked):
     """
 
 
+class Concentrated(OpenBlocked):
+    """Raised when the account already holds the cap on this company.
+
+    Same reason as `CoolingOff` for living here as well as in `risk.check`: the
+    ticket carries the verdict it was given when it was written. It is keyed by
+    ISSUER, so two share classes of one company count once -- GOOG and GOOGL
+    were open together for five days under a per-ticker cap that counted
+    tickers and a sector cap that counted GICS labels.
+    """
+
+
 PAPER_EXTRA_HAIRCUT = 0.10
 
 
@@ -78,18 +90,23 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
                   settings: Settings, proposal_id: str, approved_by: str,
                   sess: SessionState | None = None,
                   pct_off_high: float | None = None,
-                  pct_from_dma50: float | None = None) -> Position:
+                  pct_from_dma50: float | None = None,
+                  name: str = "") -> Position:
     """Open a paper position.
 
-    Five gates, all enforced here rather than left to instructions: the master
+    Six gates, all enforced here rather than left to instructions: the master
     trading switch, a recorded approver, a settled session, the re-entry
-    cooldown, and a balance the account actually has. The opening-range block
+    cooldown, the single-name cap, and a balance the account actually has. The opening-range block
     applies to paper as well as live -- a paper record built on opening-auction
     fills would overstate what the live account could have achieved.
 
     The balance gate is checked against the *filled* collateral, not the
     proposal's. A worse fill means less credit, which means MORE collateral, so
     a spread sized inside the balance can land outside it.
+
+    `name` is the company name from the constituent table, not the ticker: it
+    is what tells GOOG and GOOGL apart from two unrelated symbols. Absent, the
+    key falls back to the symbol, which is correct for every single-class name.
 
     `pct_off_high` and `pct_from_dma50` are the screen conditions that selected
     this name. They live on the Candidate, which does not reach this far, so
@@ -124,6 +141,26 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
             f"straight after one pays for a bad print twice. Shorten the wait with "
             f"`./run.py config --set reentry_cooldown_days=N`, or 0 to switch it off.")
 
+    # Re-checked at the fill, not only at proposal time, for the same reason as
+    # the cooldown above: a ticket says `risk_ok` as of when it was written, and
+    # another position on the same company can open between writing it and
+    # approving it. `issuer` groups share classes -- GOOG and GOOGL are one
+    # name, and the cap that was supposed to stop that pair counted symbols.
+    # The COMPANY NAME comes in and the key is derived here, once. Taking a
+    # ready-made key instead would let this caller and the watchlist disagree
+    # about what the key for a name is, and a cap keyed one way and counted the
+    # other silently stops binding -- which is the failure this whole field
+    # exists to fix, reproduced one level up.
+    key = universe.issuer_key(name, spread.symbol)
+    on_name = ledger.issuer_counts().get(key, 0)
+    if on_name >= settings.max_positions_per_ticker:
+        raise Concentrated(
+            f"the account already holds {on_name} position(s) on the company behind "
+            f"{spread.symbol} and the cap is {settings.max_positions_per_ticker} per "
+            f"name -- share classes of one issuer count once, so GOOG and GOOGL are "
+            f"one name. Raise it with "
+            f"`./run.py config --set max_positions_per_ticker=N`.")
+
     fill = simulated_fill_credit(spread, settings, sess)
     fees = round(spread.fees * contracts, 2)
     gross = round(fill * 100 * contracts, 2)
@@ -149,7 +186,8 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
             f"means larger collateral.")
 
     pos = Position(
-        id=new_id(), symbol=spread.symbol, sector=sector, expiration=spread.expiration,
+        id=new_id(), symbol=spread.symbol, sector=sector, issuer=key,
+        expiration=spread.expiration,
         short_strike=spread.short_strike, long_strike=spread.long_strike,
         width=spread.width, contracts=contracts, credit_open=fill,
         credit_dollars=round(gross - fees, 2), collateral=collateral,

@@ -3,7 +3,7 @@ must bind across a batch, not just one proposal at a time."""
 from conftest import make_chain
 
 from pcs.optimizer import build_spreads
-from pcs.risk import PortfolioView, check
+from pcs.risk import Pending, PortfolioView, check
 
 
 def one_spread(settings, live_session):
@@ -49,7 +49,8 @@ def test_pending_batch_cannot_slip_past_a_cap(settings, live_session):
     portfolio cap."""
     sp = one_spread(settings, live_session)
     settings.max_total_collateral = sp.collateral * 2 + 1
-    pending = [("AAA", "Energy", sp.collateral), ("BBB", "Utilities", sp.collateral)]
+    pending = [Pending("AAA", "Energy", sp.collateral),
+               Pending("BBB", "Utilities", sp.collateral)]
     assert not check(sp, "Materials", empty_view(), settings, pending).ok
 
 
@@ -80,7 +81,7 @@ def test_a_ladder_cannot_be_built_past_the_cap_one_proposal_at_a_time(
     proposals on one name both pass a cap of 1."""
     sp = one_spread(settings, live_session)
     settings.max_positions_per_ticker = 1
-    pending = [(sp.symbol, "Industrials", sp.collateral)]
+    pending = [Pending(sp.symbol, "Industrials", sp.collateral)]
     v = check(sp, "Industrials", empty_view(), settings, pending)
     assert not v.ok and any("ticker concentration" in r for r in v.reasons)
 

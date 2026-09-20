@@ -170,11 +170,11 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
     pv = risk.PortfolioView(
         open_collateral=ledger.collateral_held, open_count=len(ledger.open_positions),
         sector_counts=ledger.sector_counts(),
-        ticker_counts=ledger.ticker_counts(),
+        issuer_counts=ledger.issuer_counts(),
         cash=ledger.cash, buying_power=ledger.buying_power,
         cooldowns=ledger.cooling_off(settings))
 
-    pending: list[tuple[str, str, float]] = []
+    pending: list[risk.Pending] = []
     proposals: list[Proposal] = []
     seq = 1
     for sp, c in ranked:
@@ -188,8 +188,9 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
                            f"${contracts * sp.collateral:,.0f} over the per-trade "
                            f"${cap:,.0f} cap")
             continue
+        issuer = universe.issuer_key(c.name, c.symbol)
         verdict = risk.check(sp, c.sector, pv, settings, pending, res.session,
-                             contracts=contracts)
+                             contracts=contracts, issuer=issuer)
         p = Proposal(
             id=f"P{dt.date.today():%y%m%d}-{seq:02d}",
             created_at=dt.datetime.now().isoformat(timespec="seconds"),
@@ -204,5 +205,6 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
         proposals.append(p)
         seq += 1
         if verdict.ok:
-            pending.append((c.symbol, c.sector, sp.collateral * contracts))
+            pending.append(risk.Pending(c.symbol, c.sector,
+                                        sp.collateral * contracts, issuer))
     return proposals, skipped

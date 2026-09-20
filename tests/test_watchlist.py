@@ -126,12 +126,14 @@ def test_holding_means_at_the_cap_not_merely_owning_one(settings, led, live_sess
     sp = build_spreads(make_chain(symbol="TST", spot=100.0), 100.0, settings,
                        live_session)[0][0]
     settings.max_positions_per_ticker = 2
-    open_approved(led, sp, "Energy", 1, settings, "P1", "human", sess=live_session)
+    open_approved(led, sp, "Energy", 1, settings, "P1", "human",
+                  sess=live_session, name="TST Inc")
 
     e = build(settings, live_session, [a_candidate("TST")], led).entries[0]
     assert e.signal != watchlist.HOLDING and e.held == 1
 
-    open_approved(led, sp, "Energy", 1, settings, "P2", "human", sess=live_session)
+    open_approved(led, sp, "Energy", 1, settings, "P2", "human",
+                  sess=live_session, name="TST Inc")
     e = build(settings, live_session, [a_candidate("TST")], led).entries[0]
     assert e.signal == watchlist.HOLDING and e.held == 2
 

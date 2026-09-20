@@ -183,4 +183,4 @@ def test_the_ticker_count_is_a_count(settings, led, live_session):
     for i, sym in enumerate(("TST", "TST", "OTHER")):
         open_approved(led, a_spread(settings, live_session, sym), "Energy", 1,
                       settings, f"P{i}", "human", sess=live_session)
-    assert led.ticker_counts() == {"TST": 2, "OTHER": 1}
+    assert led.issuer_counts() == {"TST": 2, "OTHER": 1}

@@ -14,7 +14,7 @@ from pcs.config import STRATEGY
 from pcs.ledger import Ledger
 from pcs.optimizer import build_spreads
 from pcs.paper_broker import InsufficientFunds, open_approved, simulated_fill_credit
-from pcs.risk import PortfolioView, check
+from pcs.risk import Pending, PortfolioView, check
 
 
 @pytest.fixture
@@ -76,6 +76,7 @@ def test_a_refused_open_leaves_the_ledger_completely_untouched(led, settings, li
 
 def test_the_balance_can_never_be_driven_negative(led, settings, live_session):
     """Open until the account refuses, then assert it is still solvent."""
+    settings.max_positions_per_ticker = 99      # isolate the balance rule
     opened = 0
     for i in range(40):
         sp = a_spread(settings, live_session, spot=100.0 + i)
@@ -127,6 +128,7 @@ def test_the_gate_uses_the_filled_collateral_not_the_sized_one(settings, live_se
 def test_filled_collateral_cannot_breach_the_per_trade_cap(led, settings, live_session):
     """The $1,000 per-trade cap is asserted on the ticket; the fill can drift
     past it, and the position that gets written must not."""
+    settings.max_positions_per_ticker = 99      # isolate the per-trade cap
     for i in range(40):
         sp = a_spread(settings, live_session, spot=100.0 + i)
         try:
@@ -154,7 +156,7 @@ def test_a_batch_cannot_collectively_outspend_the_balance(settings, live_session
     pv = PortfolioView(0, 0, {}, {}, bal, bal)
     settings.max_total_collateral = 10_000        # isolate the balance rule
     assert check(sp, "Industrials", pv, settings).ok
-    pending = [("AAA", "Energy", sp.collateral)]
+    pending = [Pending("AAA", "Energy", sp.collateral)]
     v = check(sp, "Materials", pv, settings, pending)
     assert not v.ok and any("available balance" in r for r in v.reasons)
     assert any("already committed" in r for r in v.reasons)

@@ -82,6 +82,13 @@ class Position:
     # `exits` action. Empty on a row closed before this field existed, and that
     # emptiness is meaningful -- "not recorded" is not "not a stop".
     close_action: str = ""
+
+    # The company, not the ticker. GOOG and GOOGL are one issuer, one earnings
+    # date and one gap, and the concentration caps could not see that: one
+    # counts symbols, the other counts GICS labels. Empty means the row
+    # predates the field, and every reader falls back to `symbol` -- which is
+    # the right answer for every single-class name anyway.
+    issuer: str = ""
     fees_paid: float = 0.0
     proposal_id: str = ""
     approved_by: str = ""
@@ -334,18 +341,25 @@ class Ledger:
             out[p.sector] = out.get(p.sector, 0) + 1
         return out
 
-    def ticker_counts(self) -> dict[str, int]:
-        """Open positions per symbol.
+    def issuer_counts(self) -> dict[str, int]:
+        """Open positions per COMPANY, keyed by `Position.issuer`.
 
         A count, not a set. `max_positions_per_ticker` above 1 is meaningless
         against a set -- membership answers "any?", and the cap asks "how
         many?". The risk gate held a set and compared it with `in`, so the
         setting printed its own number in the refusal message while behaving as
         1 whatever it was set to.
+
+        Per company rather than per symbol because the cap's own documentation
+        says "positions in one NAME" and two share classes are one name. GOOG
+        and GOOGL sat open together for five days, $703.74 on Alphabet, passing
+        a ticker cap that counts tickers and a sector cap that counts labels.
+        There is deliberately only one counter: two of them is how a rule gets
+        obeyed at one call site and violated at the other.
         """
         out: dict[str, int] = {}
         for p in self.open_positions:
-            out[p.symbol] = out.get(p.symbol, 0) + 1
+            out[p.issuer or p.symbol] = out.get(p.issuer or p.symbol, 0) + 1
         return out
 
     def cooling_off(self, settings: Settings,

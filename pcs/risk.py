@@ -32,16 +32,37 @@ class RiskVerdict:
         return self.ok
 
 
+@dataclass(frozen=True)
+class Pending:
+    """A proposal already accepted earlier in this same batch.
+
+    A named record rather than a tuple because it grew a fourth field. A
+    positional tuple unpacked in two modules is exactly how `issuer` would have
+    arrived at one cap and not the other.
+    """
+
+    symbol: str
+    sector: str
+    collateral: float
+    issuer: str = ""
+
+    def __post_init__(self):
+        if not self.issuer:
+            object.__setattr__(self, "issuer", self.symbol)
+
+
 @dataclass
 class PortfolioView:
     open_collateral: float
     open_count: int
     sector_counts: dict[str, int]
-    # Per-symbol COUNTS, not a set of held names. This was a set, and the
+    # Per-ISSUER COUNTS, not a set of held names. This was a set, and the
     # per-ticker check was `symbol in symbols` -- so the cap behaved as 1 no
     # matter what `max_positions_per_ticker` said, while the refusal message
-    # quoted the setting's real value back at the reader.
-    ticker_counts: dict[str, int]
+    # quoted the setting's real value back at the reader. It then counted
+    # symbols, which let GOOG and GOOGL sit open together under a cap whose own
+    # documentation says "positions in one NAME". See `universe.issuer_key`.
+    issuer_counts: dict[str, int]
     cash: float
     buying_power: float          # unencumbered cash, see Ledger.buying_power
     # symbol -> ISO date it becomes eligible again. See Ledger.cooling_off.
@@ -50,27 +71,31 @@ class PortfolioView:
 
 
 def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
-          pending: list[tuple[str, str, float]] | None = None,
-          sess=None, contracts: int = 1) -> RiskVerdict:
-    """`pending` = (symbol, sector, collateral) already accepted this run, so a
-    single batch cannot blow through a cap by being evaluated one at a time.
+          pending: list[Pending] | None = None,
+          sess=None, contracts: int = 1, issuer: str = "") -> RiskVerdict:
+    """`pending` is what has already been accepted this run, so a single batch
+    cannot blow through a cap by being evaluated one at a time.
 
     `Spread.collateral` is per contract; every cap here is a portfolio total, so
     the position size has to be multiplied in or a 2-lot is checked as a 1-lot.
+
+    `issuer` groups share classes of one company; it defaults to the symbol,
+    which is the right key for every single-class name in the index.
     """
     pending = pending or []
     reasons: list[str] = []
     warnings: list[str] = []
 
     need = round(spread.collateral * contracts, 2)
-    committed = sum(c for _, _, c in pending)
+    committed = sum(q.collateral for q in pending)
     used = pv.open_collateral + committed
     count = pv.open_count + len(pending)
     sectors = dict(pv.sector_counts)
-    tickers = dict(pv.ticker_counts)
-    for sym, sec, _ in pending:
-        sectors[sec] = sectors.get(sec, 0) + 1
-        tickers[sym] = tickers.get(sym, 0) + 1
+    issuers = dict(pv.issuer_counts)
+    key = issuer or spread.symbol
+    for q in pending:
+        sectors[q.sector] = sectors.get(q.sector, 0) + 1
+        issuers[q.issuer] = issuers.get(q.issuer, 0) + 1
 
     if used + need > settings.max_total_collateral:
         reasons.append(
@@ -82,11 +107,12 @@ def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
         reasons.append(
             f"sector concentration: already {sectors.get(sector, 0)} position(s) in "
             f"{sector}, cap is {settings.max_positions_per_sector}")
-    on_ticker = tickers.get(spread.symbol, 0)
+    on_ticker = issuers.get(key, 0)
     if on_ticker >= settings.max_positions_per_ticker:
         reasons.append(
-            f"ticker concentration: already {on_ticker} position(s) on "
-            f"{spread.symbol}, cap is {settings.max_positions_per_ticker} per ticker")
+            f"ticker concentration: already {on_ticker} position(s) on the company "
+            f"behind {spread.symbol}, cap is {settings.max_positions_per_ticker} "
+            f"per name (share classes of one issuer count once)")
     # A stop fires on a mark, and a mark can be wrong. Re-opening the name the
     # same session re-establishes the risk at a worse price, so a single bad
     # print gets paid for twice -- which is exactly what happened to GOOGL.
@@ -117,7 +143,7 @@ def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
     # can do: two positions, one gap risk. Allowed, and never silent.
     if on_ticker >= 1:
         warnings.append(f"single-name concentration: this would be position "
-                        f"#{on_ticker + 1} on {spread.symbol} itself -- one gap in "
+                        f"#{on_ticker + 1} on the company behind {spread.symbol} -- one gap in "
                         f"that name hits both")
     if spread.fill_risk:
         warnings.append(f"natural credit is only ${spread.credit_nat_dollars:.0f} -- "

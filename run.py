@@ -247,7 +247,8 @@ def _auto_open(props, led, settings: Settings, sess, journal=None) -> int:
             pos = paper_broker.open_approved(
                 led, Spread(**p.spread), p.sector, p.contracts, settings,
                 proposal_id=p.id, approved_by=approver, sess=sess,
-                pct_off_high=p.pct_off_high, pct_from_dma50=p.pct_from_dma50)
+                pct_off_high=p.pct_off_high, pct_from_dma50=p.pct_from_dma50,
+                name=p.name)
         except paper_broker.OpenBlocked as exc:
             held.append((p, str(exc)))
             learning.record_fault(journal, learning.OPEN_BLOCKED, p.symbol, str(exc))
@@ -315,7 +316,8 @@ def cmd_approve(args, settings: Settings) -> int:
         pos = paper_broker.open_approved(led, sp, p.sector, p.contracts, settings,
                                          proposal_id=p.id, approved_by=approver,
                                          sess=sess, pct_off_high=p.pct_off_high,
-                                         pct_from_dma50=p.pct_from_dma50)
+                                         pct_from_dma50=p.pct_from_dma50,
+                                         name=p.name)
     except paper_broker.MarketNotReady as exc:
         print(f"\nHELD - {exc}")
         print(f"  {p.id} stays pending. Re-run this same command after "
@@ -698,8 +700,8 @@ _CONFIG_GROUPS = (
         ("max_open_positions", ""),
         ("max_positions_per_sector", "a ticker has one sector, so this is the "
                                      "ceiling the per-ticker cap can reach"),
-        ("max_positions_per_ticker", "positions in one NAME; above 1 this is a "
-                                     "ladder in a single underlying"),
+        ("max_positions_per_ticker", "positions in one COMPANY; share classes "
+                                     "count once, so GOOG and GOOGL are one name"),
         ("reentry_cooldown_days", "days a name is held out after closing at a "
                                   "loss (0 = off)"),
     )),

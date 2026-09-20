@@ -209,6 +209,11 @@ class Settings:
     # expirations or two strikes on the same underlying, which is a real way to
     # scale into a setup and also the fastest way to concentrate an account.
     #
+    # NAME means COMPANY. It counted symbols until GOOG and GOOGL sat open
+    # together for five days -- $703.74 on Alphabet, invisible to this cap and
+    # to the sector cap alike. The number did not change; the unit did. See
+    # `universe.issuer_key` and LEARNING.md 46.
+    #
     # It does not bind on its own. A ticker has exactly one GICS sector, so
     # `max_positions_per_sector` is the ceiling this can ever reach -- at a
     # sector cap of 2, a per-ticker cap of 5 still tops out at 2. Raise the

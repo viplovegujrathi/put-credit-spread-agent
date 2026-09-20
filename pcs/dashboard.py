@@ -1632,7 +1632,8 @@ ${settings.max_total_collateral:,.0f} cap ({used_pct:.0%} used)</li>
 ${led.net_liq:,.0f} net liq, across {len(led.open_positions)} position(s) in
 {len(led.sector_counts())} GICS sector(s). The sector cap counts labels, not
 correlation &mdash; four large-cap tech names in two sectors pass it and still
-move together on one bad index day.</li>
+move together on one bad index day. The per-name cap counts companies, not
+tickers, so two share classes of one issuer count once.</li>
 <li>Available balance: <b>${led.buying_power:,.2f}</b> (cash ${led.cash:,.2f} less
 ${led.capital_at_risk:,.0f} of capital at risk). Nothing opens that needs more free
 balance than this &mdash; the account can always pay its own max loss.</li>

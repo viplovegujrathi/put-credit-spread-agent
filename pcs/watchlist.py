@@ -17,7 +17,7 @@ import datetime as dt
 import json
 from dataclasses import asdict, dataclass, field
 
-from . import risk, screener
+from . import risk, screener, universe
 from .config import DATA_DIR, Settings
 from .ledger import Ledger
 from .optimizer import Spread
@@ -129,7 +129,7 @@ def build(res, sized: list, led: Ledger, settings: Settings,
     are not imported for typing because pipeline imports this module's siblings
     and the cycle is not worth the annotation.
     """
-    held = led.ticker_counts()
+    held = led.issuer_counts()
     pv = risk.PortfolioView(led.collateral_held, len(led.open_positions),
                             led.sector_counts(), held, led.cash, led.buying_power,
                             cooldowns=led.cooling_off(settings))
@@ -149,7 +149,10 @@ def build(res, sized: list, led: Ledger, settings: Settings,
         # and labelling it HOLDING would hide a permitted add behind a status
         # that reads as nothing-to-do. Below the cap it goes through the risk
         # check like any other candidate, which is what surfaces the cooldown.
-        e.held = held.get(c.symbol, 0)
+        # Keyed by company: a watchlist row for GOOG has to see the GOOGL
+        # position that will actually block it, or the page promises a fill the
+        # risk gate refuses.
+        e.held = held.get(universe.issuer_key(c.name, c.symbol), 0)
         if e.held >= settings.max_positions_per_ticker:
             e.signal = HOLDING
         elif c.bucket == screener.NEAR_TIGHT:

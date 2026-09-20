@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 455 tests, ruff clean.
+- 468 tests, ruff clean.
 
 ---
 
@@ -1358,4 +1358,50 @@ the bar exactly would lose money at exactly the rate it was certified for.
 `readiness.assess` now carries a blocking criterion comparing the two, so the
 bar cannot be set underneath its own payoff. This is the same shape as 42: a
 rule stated in one place and contradicted by a number set somewhere else.
+
+---
+
+## 46. The per-name cap counted tickers, and a company is not a ticker
+
+GOOG and GOOGL were open together 2026-09-09 to 2026-09-14, $703.74 of a $2,400
+budget on Alphabet. Two caps existed to prevent exactly that and neither fired:
+`max_positions_per_ticker` counted symbols, `max_positions_per_sector` counted
+GICS labels, and none of the 23 labels separates a company from itself.
+
+The cap was not wrong about its intent -- its own docstring reads *"positions
+in one NAME, not contracts"*. **The number did not change; the unit did.** Same
+shape as 42 and 45: a rule stated correctly in one place and measured wrongly
+in another.
+
+`universe.issuer_key(name, symbol)` derives the company from the constituent
+table's own `name` column, which carries the class in parentheses
+("Alphabet Inc. (Class A)"). Across the 503 cached S&P 500 rows it merges
+Alphabet, Fox and News Corp and **nothing else** -- 500 issuers, no false
+merge, which is the half that matters, because a false merge refuses a trade
+the account was entitled to take. A six-symbol table backs it up for rows whose
+name did not survive, and `screener`'s "Unknown" sentinel is explicitly not a
+company: two Unknowns must never merge.
+
+Three things worth keeping:
+
+- **One derivation point.** `open_approved` takes the company NAME and derives
+  the key itself. An earlier draft took a ready-made key, and the watchlist
+  derived its own -- the test caught them disagreeing within the hour. A cap
+  keyed one way and counted the other silently stops binding, which is the
+  original bug reproduced one level up.
+- **Enforced at the fill, not only at proposal time.** Same reason as the
+  re-entry cooldown: a ticket carries the verdict it was given when it was
+  written, and GOOG can be proposed at 13:00 against an empty book and approved
+  at 15:00 after GOOGL filled. New exception `paper_broker.Concentrated`.
+- **One counter.** `Ledger.ticker_counts()` is gone rather than kept alongside
+  `issuer_counts()`. Two counters is how the next call site gets missed.
+
+`Position.issuer` is empty on all 18 rows in the live ledger; every reader
+falls back to `symbol`, which is the correct key for every single-class name,
+so the history reads exactly as before and only new fills are grouped.
+
+**What this does NOT do:** the box has `max_positions_per_ticker = 5`, so the
+Alphabet pair would still have been allowed. The cap now measures the right
+thing; what number it should be is a risk decision and not one to infer from a
+13-trade record.
 
