@@ -1447,3 +1447,49 @@ rank those two numbers are not comparable, and selling a 65% IV that is cheap
 for STX is a different trade from selling it because it is high in absolute
 terms.
 
+---
+
+## 48. The first `push.sh` deploy found a bug every hand-run deploy had hidden
+
+`./deploy/push.sh pcs` on 2026-09-20 shipped the code, installed it, started the
+timers and ran the suite on the box -- then died in the web section:
+
+    from pcs import authd; print(authd.error_page())
+    ModuleNotFoundError: No module named 'pcs'
+
+`python -c` puts the **current directory** on `sys.path`, not the app's. Every
+deploy before this one was run by hand as `cd ~/put-credit-spread-agent && sudo
+./deploy/bootstrap.sh`, and that directory contains a `pcs/` package -- so the
+import had been resolving against the clone by accident for the life of the
+script. `push.sh` runs `bash /tmp/pcs-src/deploy/bootstrap.sh` from the login
+directory, where there is no `pcs/`, and the accident stopped working. Every
+other python call in the script passes `$APP/run.py` as a script path, which
+puts the app on `sys.path` by itself; this was the only `-c`.
+
+**Same shape as 43**: a command that worked because of where it happened to be
+run, not because it was correct. The fix is `( cd "$APP" && ... )`.
+
+The second defect is the worse one. The line was
+
+    "$APP/.venv/bin/python" -c '...' > "$WEB/50x.html"
+
+and the shell truncates the target **before** running the command, so a failure
+destroyed a good file it had no business touching -- `/var/www/pcs/50x.html`
+went to 0 bytes. Same shape as the health.json wipe in 44: state destroyed by a
+step that was only supposed to write it. It now builds beside the target,
+checks the result is non-empty, and moves it into place.
+
+### What the aborted deploy actually left behind
+
+Worth recording because the traceback looks worse than the outcome. Sections
+1-5 had already completed, so: `/opt/pcs` carried the new code, all three
+timers were live, the site answered 302, and 474 tests passed on the box. Only
+the web section was cut short -- an empty 50x page (served only if `pcs-authd`
+is down) and a skipped `push.sh` verification step. The nginx vhost was not
+rewritten and did not need to be.
+
+**`~/put-credit-spread-agent` on the box stays behind on purpose.** `push.sh`
+syncs the laptop's working tree to `/tmp/pcs-src` and installs from there;
+the box's own clone is not in that path and is not what runs. Checking
+`git log` in it says nothing about what is deployed -- read `/opt/pcs`.
+

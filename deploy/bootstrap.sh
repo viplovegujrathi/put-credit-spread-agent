@@ -237,8 +237,26 @@ NGINX
 
 # Generated from the same stylesheet and mark as the login page it stands in
 # for -- served by nginx when pcs-authd itself is unreachable.
-"$APP/.venv/bin/python" -c 'from pcs import authd; print(authd.error_page())' \
-  > "$WEB/50x.html"
+#
+# Two things this line got wrong, both of which only showed up once the deploy
+# stopped being run by hand from the clone:
+#
+#   * `python -c` puts the CURRENT DIRECTORY on sys.path, not the app's. Every
+#     hand-run deploy did `cd ~/put-credit-spread-agent && sudo
+#     ./deploy/bootstrap.sh`, and that directory happens to contain a `pcs/`
+#     package -- so the import resolved against the clone by accident. Run from
+#     anywhere else (which is what `push.sh` does) it is ModuleNotFoundError.
+#     Every other python call here passes `$APP/run.py` as a script path, which
+#     puts the app on sys.path on its own; this was the only `-c`.
+#   * The redirect truncated the live page BEFORE the command ran, so the
+#     failure destroyed a good file it had no need to touch. Same shape as the
+#     health.json wipe. Build it beside the target and move it in on success.
+TMP50X="$WEB/.50x.html.new"
+( cd "$APP" && "$APP/.venv/bin/python" -c \
+    'from pcs import authd; print(authd.error_page())' ) > "$TMP50X"
+[ -s "$TMP50X" ] || die "the 50x page came out empty -- refusing to install it over
+  $WEB/50x.html. Check: cd $APP && ./.venv/bin/python -c 'from pcs import authd'"
+mv "$TMP50X" "$WEB/50x.html"
 chown "$SVC_USER:$SVC_USER" "$WEB/50x.html"; chmod 0644 "$WEB/50x.html"
 
 # Do not clobber a vhost a human wrote at this path. Ours is recognised by the
