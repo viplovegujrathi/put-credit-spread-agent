@@ -12,7 +12,7 @@ import datetime as dt
 import html
 import sys
 
-from . import brand, health, learning, watchlist
+from . import brand, expectancy, health, learning, watchlist
 from .config import (
     DASHBOARD_HTML,
     DASHBOARD_SETTABLE,
@@ -1036,7 +1036,73 @@ _NOISY_EVENTS = {"marked"}
 _LOG_LIMIT = 250
 
 
-def _history_panel(led: Ledger) -> str:
+def _expectancy_cards(led: Ledger, settings: Settings) -> str:
+    """The break-even win rate, next to the one actually being delivered.
+
+    The note under the cards below has said for weeks that a high win rate at
+    low capture and a few full-size stops is a losing book that reads as a
+    winning one. It names the failure exactly and then leaves the reader to do
+    the arithmetic in their head. This does the arithmetic. See
+    `pcs/expectancy.py`; the same number gates go-live in `pcs/readiness.py`.
+    """
+    xp = expectancy.summary(led, settings)
+    po, be, edge = xp.payoff, xp.breakeven, xp.edge
+    if po is None or be is None:
+        return ""
+
+    # Tint the requirement, not the delivered rate: the reader needs to know
+    # whether the gap is the right way round, and the gap lives on this card.
+    gap = "" if xp.clears is None else ("c-pos" if xp.clears else "c-neg")
+    delivered = (f'{xp.win_rate:.0%} <span class="dim">of {xp.decided}</span>'
+                 if xp.decided else '<span class="dim">&mdash;</span>')
+    edge_txt = (f'{_sign(edge, ".2f", money=False)}x' if edge is not None
+                else '<span class="dim">&mdash;</span>')
+
+    imp = xp.implied
+    if po.sample:
+        src = (f"Measured over {po.sample} decided trade(s): the average win kept "
+               f"{po.win:.2f}x the credit taken in and the average loss cost "
+               f"{po.loss:.2f}x")
+        src += (f", against {imp.breakeven:.0%} implied by the exit settings alone."
+                if imp else ".")
+    else:
+        st = settings.strategy()
+        src = (f"From the exit settings &mdash; nothing has closed both ways yet. "
+               f"Booking at {st.take_profit_pct:.0%} of the credit makes a win worth "
+               f"{po.win:.2f}x it, and buying back at "
+               f"{settings.stop_loss_credit_multiple:g}x makes a loss cost "
+               f"{po.loss:.2f}x.")
+    scratched = len(led.closed_positions) - xp.decided
+    if xp.decided and scratched > 0:
+        src += (f" {scratched} fee-only close(s) sit in neither bucket &mdash; "
+                f"they measure nothing either way.")
+
+    if xp.clears is False:
+        verdict = (f" At {xp.win_rate:.0%} delivered this book is under that line: "
+                   f"it is losing money slowly, not making it.")
+    elif xp.clears is True:
+        verdict = f" At {xp.win_rate:.0%} delivered this book is clearing it."
+    else:
+        verdict = ""
+
+    return (
+        f'<div class="cards" style="margin-bottom:8px">'
+        f'<div class="card {gap}"><div class="k">break-even win rate</div>'
+        f'<div class="v">{be:.0%}</div></div>'
+        f'<div class="card"><div class="k">delivered, decided only</div>'
+        f'<div class="v">{delivered}</div></div>'
+        f'<div class="card"><div class="k">avg win / avg loss</div>'
+        f'<div class="v">{po.win:.2f}x / {po.loss:.2f}x</div></div>'
+        f'<div class="card {_pl_class(edge or 0.0)}"><div class="k">edge per trade</div>'
+        f'<div class="v">{edge_txt}</div></div>'
+        f"</div>"
+        f'<div class="rules" style="margin-bottom:14px"><ul><li><b>What these exits '
+        f'require:</b> {be:.0%} of trades have to win for this configuration to make '
+        f'exactly nothing. {src}{verdict} No screen and no entry filter moves that '
+        f'line &mdash; they can only change how often it is cleared.</li></ul></div>')
+
+
+def _history_panel(led: Ledger, settings: Settings) -> str:
     """Closed positions plus the event log, newest first."""
     events = [e for e in reversed(led.events)
               if e.get("kind") not in _NOISY_EVENTS]
@@ -1088,7 +1154,8 @@ def _history_panel(led: Ledger) -> str:
             f'ended:</b> {_e(reason_txt)}. Capture is realised P&amp;L over credit '
             f'taken in &mdash; a high win rate at low capture and a few full-size '
             f'stops is a losing book that reads as a winning one.</li></ul></div>')
-    return (f"{summary}<h2>Closed positions</h2>{_closed_table(closed)}"
+    return (f"{summary}{_expectancy_cards(led, settings)}"
+            f"<h2>Closed positions</h2>{_closed_table(closed)}"
             f"<h2>Event log &mdash; every action, newest first</h2>"
             f'<div class="rules">{log}</div>{footer}')
 
@@ -1528,7 +1595,7 @@ opened {_e(led.created_at[:10])} &middot; rebuilt {dt.datetime.now():%Y-%m-%d %H
 </section>
 
 <section class="panel" id="p-history" hidden>
-{_history_panel(led)}
+{_history_panel(led, settings)}
 </section>
 
 <section class="panel" id="p-ready" hidden>

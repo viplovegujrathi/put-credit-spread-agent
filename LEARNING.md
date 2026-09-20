@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 437 tests, ruff clean.
+- 455 tests, ruff clean.
 
 ---
 
@@ -1314,3 +1314,48 @@ in 21, 29 and 33 was wiped on every redeploy since it shipped, and **the
 cold-start fallback from 29 hid it**: absent record, `ledger_evidence()` fills
 in, page looks healthy. A graceful degradation that never announces itself is
 indistinguishable from the thing working. Added to both exclude lists.
+
+---
+
+## 45. The dashboard described the break-even for weeks instead of computing it
+
+Under the history cards sat a note: *a high win rate at low capture and a few
+full-size stops is a losing book that reads as a winning one.* It names the
+failure exactly and leaves the reader to do the arithmetic. Nobody does.
+`pcs/expectancy.py` does it instead. Two settings fix the number and nothing
+else touches it:
+
+    win  = take_profit_pct           x credit
+    loss = (stop_loss_multiple - 1)  x credit
+    break-even = loss / (loss + win)
+
+66.7% at the shipped defaults. **No screen, no entry filter and no amount of
+stock-picking moves it** -- they change only how often it is cleared. Anything
+proposed as making the agent "more profitable" that does not move `win`, `loss`
+or the win rate is not an improvement, and this is the module to check it
+against.
+
+Three design points worth keeping:
+
+- **Credit multiples, not dollars.** The book sizes from $98 to $420 of
+  premium; dollars are not comparable across it. Same normalisation as
+  `learning.Outcome.capture`, and against `credit_open x 100 x contracts`
+  (gross) rather than `credit_dollars` (net of fees), because the take-profit
+  rule is written against the gross figure.
+- **One-sided books return `None`.** Eight wins and no losses has not measured
+  what a loss costs. Reporting a break-even of 0% there would read as *any win
+  rate is fine* -- the most dangerous output the module could produce.
+- **A measured payoff beats a derived one.** The exits overshoot in both
+  directions: take-profit fires on the first mark at or above target so it
+  books 55% against a 50% rule, and a stop set at 2.0x fills at 2.1x or 2.8x.
+  Only one of those drifts is in the account's favour. Live: 0.548x / 1.158x
+  against 0.50x / 1.00x on paper, so the real requirement was 67.9%, not 66.7%.
+
+### The go-live gate could certify a losing configuration
+
+`min_win_rate_for_live` was 0.60 with a break-even of 0.667. A book that met
+the bar exactly would lose money at exactly the rate it was certified for.
+`readiness.assess` now carries a blocking criterion comparing the two, so the
+bar cannot be set underneath its own payoff. This is the same shape as 42: a
+rule stated in one place and contradicted by a number set somewhere else.
+

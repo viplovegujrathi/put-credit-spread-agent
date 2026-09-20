@@ -22,6 +22,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
+from . import expectancy
 from .config import Settings
 from .exits import DEFEND, STOP_LOSS
 from .ledger import LOSS_FLOOR, Ledger
@@ -96,6 +97,12 @@ def assess(led: Ledger, settings: Settings) -> Readiness:
     # this one gates real money where the nginx marker only gated a redeploy).
     stopped = [p for p in closed if p.close_action in (STOP_LOSS, DEFEND)]
     unproven = [p for p in closed if not p.close_action]
+    # The win-rate criterion below asks whether the account clears its bar. This
+    # asks whether the bar is high enough to be worth clearing: booking at 50%
+    # of the credit and stopping at 2x sets a break-even of 66.7%, so a
+    # `min_win_rate_for_live` of 60% certifies a configuration that loses money
+    # at exactly the rate it was certified for. See pcs/expectancy.py.
+    be = expectancy.summary(led, settings).breakeven
 
     need_n = settings.min_closed_trades_for_live
     need_wr = settings.min_win_rate_for_live
@@ -126,6 +133,16 @@ def assess(led: Ledger, settings: Settings) -> Readiness:
             f"Win rate at or above {need_wr:.0%}",
             bool(closed) and win_rate >= need_wr,
             f"{win_rate:.0%} on {len(closed)} trade(s)" if closed else "no trades yet"),
+        Criterion(
+            "Go-live bar clears the payoff's own break-even",
+            be is not None and need_wr >= be,
+            (f"bar is {need_wr:.0%}; these exit rules break even at {be:.0%}"
+             if be is not None and need_wr >= be
+             else f"bar is {need_wr:.0%} but these exit rules break even at {be:.0%} -- "
+                  f"a book that exactly met the bar would still lose money"
+             if be is not None
+             else "no break-even to compare against: the stop is not expressible "
+                  "in credit multiples and nothing has closed both ways yet")),
         Criterion(
             "A loss has actually been taken",
             bool(losses),
