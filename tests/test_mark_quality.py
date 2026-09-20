@@ -190,3 +190,58 @@ def test_the_mark_is_left_alone_when_it_cannot_be_refreshed(
                                          ((0.0, 3.30), (1.95, 2.15))])
 def test_either_leg_without_a_book_refuses(settings, short, long_):
     assert cost_to_close(two_leg_chain(short, long_), googl(), settings) is None
+
+
+# --- the vol behind a stop, which the record could not see -----------------
+def test_the_mark_writes_the_short_leg_vol(settings, tmp_path, monkeypatch):
+    """Three of the first five losses stopped out with the short strike never
+    breached -- GOOGL 3.1% clear, RDDT 0.4%, STX 5.4%. A short vertical is
+    short vega, so an IV expansion can double the buy-back price with the
+    underlying untouched, and a credit-multiple stop cannot tell that from a
+    directional loss. The record could not settle it either way: the only vol
+    reading it held was from the day of the fill."""
+    import pcs.paper_broker as pb
+    chain = two_leg_chain()
+    for q in chain.puts:
+        q.iv = 0.42
+    monkeypatch.setattr(pb, "get_chain", lambda *a, **k: chain)
+    led = Ledger.load(settings, path=tmp_path / "l.json")
+    pos = googl()
+    pos.iv_at_open = 0.30
+    led.positions = [pos]
+
+    mark_positions(led, settings, {"GOOGL": 335.26})
+
+    assert pos.mark_iv == 0.42
+    assert pos.iv_change == 0.40          # vol 40% higher than at the fill
+
+
+def test_a_chain_quoting_no_vol_records_none_not_zero(settings, tmp_path, monkeypatch):
+    """The model provider falls back to a flat 0.30, so a stored constant would
+    read as a measurement. Zero is worse still -- it would say vol collapsed to
+    nothing, which is the one reading that is definitely not true."""
+    import pcs.paper_broker as pb
+    chain = two_leg_chain()
+    for q in chain.puts:
+        q.iv = 0.0
+    monkeypatch.setattr(pb, "get_chain", lambda *a, **k: chain)
+    led = Ledger.load(settings, path=tmp_path / "l.json")
+    pos = googl()
+    pos.iv_at_open = 0.30
+    led.positions = [pos]
+
+    mark_positions(led, settings, {"GOOGL": 335.26})
+
+    assert pos.mark_iv is None
+    assert pos.iv_change is None
+
+
+def test_half_a_reading_is_not_a_change():
+    """Either end missing has to be None. Treating an unrecorded open vol as
+    zero would divide by it; treating it as the current one would report that
+    vol never moved, which is a claim the record cannot make."""
+    pos = googl()
+    pos.iv_at_open, pos.mark_iv = None, 0.42
+    assert pos.iv_change is None
+    pos.iv_at_open, pos.mark_iv = 0.30, None
+    assert pos.iv_change is None

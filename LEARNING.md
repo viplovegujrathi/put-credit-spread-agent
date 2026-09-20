@@ -132,7 +132,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 468 tests, ruff clean.
+- 474 tests, ruff clean.
 
 ---
 
@@ -1404,4 +1404,46 @@ so the history reads exactly as before and only new fills are grouped.
 Alphabet pair would still have been allowed. The cap now measures the right
 thing; what number it should be is a risk decision and not one to infer from a
 13-trade record.
+
+---
+
+## 47. Three of the first five losses stopped on a strike that was never touched
+
+GOOGL 3.1% clear, RDDT 0.4%, STX 5.4%. Only BA (-0.7%) and CLX (-6.0%) were in
+trouble. `close_reason` said `stop_loss` for all five, and the dashboard
+rendered all five identically -- which is the record failing at its job, since
+a stop on an untouched strike and a stop on a thesis that broke are different
+trades with different fixes.
+
+The suspect is vega. **A short vertical is short vega:** an IV expansion can
+double the buy-back price with the underlying untouched, and a
+credit-multiple stop cannot tell that from a directional loss. The record could
+not settle it, because the only vol reading it held was `iv_at_open`, from the
+day of the fill. `mark_iv` now goes onto the position at every mark, so a row
+that closes carries the vol at the mark the exit acted on, and
+`Position.iv_change` is the fraction between the two. `None` when either end is
+missing, never zero -- "vol did not move" and "nobody wrote it down" are
+different facts and only one of them is evidence.
+
+Two things this buys and one it does not:
+
+- The closed table has an **at exit** column: how far the stock was from the
+  short strike when the row closed, and what vol had done. Both read
+  `mark_spot` / `mark_iv`, which are refreshed on every mark, so on a closed
+  row they are the reading the exit acted on -- no new plumbing, and the
+  cushion half works retrospectively on all 13 existing rows.
+- The history note carries the count: *3 of 5 losing trades closed with the
+  short strike never breached*. Counted off losses rather than `close_action`,
+  which shipped after those rows.
+- It does **not** answer the question yet. `mark_iv` is null on every existing
+  row and can only be learned from positions marked after this shipped, same
+  as the entry features in `13e3a28`. Until several stops carry both readings
+  there is nothing to conclude, and no stop parameter should be changed on the
+  strength of a hypothesis the record cannot yet test.
+
+**IV rank remains unrecorded** -- where a name's IV sits in its own year, as
+opposed to its absolute level. STX opened at 65% IV and CLX at 36%; without a
+rank those two numbers are not comparable, and selling a 65% IV that is cheap
+for STX is a different trade from selling it because it is high in absolute
+terms.
 

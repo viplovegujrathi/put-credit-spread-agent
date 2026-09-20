@@ -332,6 +332,12 @@ def mark_positions(ledger: Ledger, settings: Settings, spots: dict[str, float]
         pos.mark_cost_to_close = debit
         pos.mark_spot = spot or chain.spot or pos.mark_spot
         pos.marked_at = dt.datetime.now().isoformat(timespec="seconds")
+        # Written on every mark, so a position that closes carries the vol at
+        # the mark the exit acted on. `or None` because the model provider
+        # falls back to a flat 0.30 and a fabricated constant must not be
+        # stored as a reading -- same rule as `iv_at_open` at the fill.
+        sq = chain.at(pos.short_strike)
+        pos.mark_iv = (sq.iv or None) if sq else None
         fresh.add(pos.id)
         note = management_note(pos, settings.strategy())
         if note:

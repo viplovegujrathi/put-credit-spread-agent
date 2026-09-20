@@ -22,7 +22,7 @@ from .config import (
     load_overrides,
 )
 from .exits import decide
-from .ledger import Ledger, Position
+from .ledger import LOSS_FLOOR, Ledger, Position
 from .proposer import Proposal
 from .readiness import assess
 from .session import SessionState
@@ -952,6 +952,27 @@ def _positions_table(rows: list[Position], settings: Settings,
                    "status"], out)
 
 
+def _exit_context(p: Position) -> str:
+    """Where the underlying and the vol were when this row closed.
+
+    `mark_spot` and `mark_iv` are written on every mark, so on a closed
+    position they are the reading the exit actually acted on. Three of the
+    first five losses stopped out with the short strike never breached --
+    GOOGL 3.1% clear, RDDT 0.4%, STX 5.4% -- and nothing on this page said so:
+    the outcome column reported `stop_loss` for those and for the two that were
+    genuinely in trouble, which are different trades with different fixes.
+    """
+    bits = []
+    c = p.cushion
+    if c is not None:
+        bits.append(f"<b>{abs(c):.1%}</b> {'clear' if c >= 0 else 'through'}")
+    iv = p.iv_change
+    if iv is not None:
+        bits.append(f"IV {_sign(iv * 100, '.0f', money=False)}%")
+    return ("<span class='dim'>&mdash;</span>" if not bits
+            else " &middot; ".join(bits))
+
+
 def _closed_table(rows: list[Position]) -> str:
     if not rows:
         return '<div class="empty">No closed positions yet.</div>'
@@ -963,10 +984,11 @@ def _closed_table(rows: list[Position]) -> str:
         f"${p.credit_dollars:,.0f}",
         f"${p.close_debit * 100 * p.contracts:,.0f}",
         _sign(p.realized_pl),
+        _exit_context(p),
         f"<span class='dim'>{_e(p.close_reason)}</span>",
     ] for p in sorted(rows, key=lambda x: x.closed_at, reverse=True)]
     return _table(["id", "ticker", "spread", "expiration", "credit", "debit",
-                   "realized", "outcome"], out)
+                   "realized", "at exit", "outcome"], out)
 
 
 def _proposals_table(props: list[Proposal]) -> str:
@@ -1135,6 +1157,20 @@ def _history_panel(led: Ledger, settings: Settings) -> str:
             reasons[p.close_reason or "unknown"] = reasons.get(p.close_reason or "unknown", 0) + 1
         reason_txt = ", ".join(f"{k.replace('_', ' ')} x{v}"
                                for k, v in sorted(reasons.items(), key=lambda kv: -kv[1]))
+        # A stop that fired with the short strike still clear and a stop that
+        # fired with the stock through it are different trades: the first is
+        # the mark or the vol moving, the second is the thesis being wrong.
+        # `close_reason` calls both of them `stop_loss`, so the count is done
+        # here off `mark_spot`, which is the reading the exit acted on. Losses
+        # rather than `close_action`, because the field shipped after these
+        # rows and every one of them would otherwise be uncountable.
+        losses = [p for p in closed if p.realized_pl <= LOSS_FLOOR]
+        clear = [p for p in losses if (p.cushion or 0) >= 0]
+        loss_note = (
+            f" <b>{len(clear)} of {len(losses)}</b> losing trade(s) closed with the "
+            f"short strike never breached &mdash; a short vertical is short vega, "
+            f"and an IV expansion can double the buy-back price with the "
+            f"underlying untouched." if losses and clear else "")
         summary = (
             f'<div class="cards" style="margin-bottom:8px">'
             f'<div class="card"><div class="k">closed trades</div>'
@@ -1153,7 +1189,8 @@ def _history_panel(led: Ledger, settings: Settings) -> str:
             f'<div class="rules" style="margin-bottom:14px"><ul><li><b>How they '
             f'ended:</b> {_e(reason_txt)}. Capture is realised P&amp;L over credit '
             f'taken in &mdash; a high win rate at low capture and a few full-size '
-            f'stops is a losing book that reads as a winning one.</li></ul></div>')
+            f'stops is a losing book that reads as a winning one.{loss_note}'
+            f'</li></ul></div>')
     return (f"{summary}{_expectancy_cards(led, settings)}"
             f"<h2>Closed positions</h2>{_closed_table(closed)}"
             f"<h2>Event log &mdash; every action, newest first</h2>"

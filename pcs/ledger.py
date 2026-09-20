@@ -73,6 +73,18 @@ class Position:
     mark_cost_to_close: float = 0.0   # per share
     mark_spot: float = 0.0
     marked_at: str = ""
+    # Short-leg implied vol at the last mark, against `iv_at_open` below.
+    #
+    # A short vertical is short vega: an IV expansion can double the buy-back
+    # price with the underlying untouched, and a credit-multiple stop cannot
+    # tell that from a directional loss. Three of the first five stops fired
+    # with the short strike never breached -- GOOGL 3.1% clear, RDDT 0.4%,
+    # STX 5.4% -- and the record could neither confirm nor refute a vol cause,
+    # because the only IV it held was the one from the day of the fill.
+    #
+    # None means not recorded. On a closed row this is the vol at the mark the
+    # exit acted on, which is the measurement that was missing.
+    mark_iv: float | None = None
     # close-out
     closed_at: str = ""
     close_debit: float = 0.0          # per share
@@ -175,6 +187,20 @@ class Position:
         return round((self.mark_spot - self.short_strike) / self.mark_spot, 4)
 
     @property
+    def iv_change(self) -> float | None:
+        """Fractional move in short-leg IV since the fill, or None.
+
+        +0.40 means vol is 40% higher than when the credit was sold, which
+        makes the spread more expensive to buy back with no help from the
+        underlying at all. Needs both readings; either missing is None, never
+        zero -- "vol did not move" and "nobody wrote it down" are different
+        facts and only one of them is evidence.
+        """
+        if not self.iv_at_open or self.mark_iv is None:
+            return None
+        return round((self.mark_iv - self.iv_at_open) / self.iv_at_open, 4)
+
+    @property
     def mark_age_minutes(self) -> float | None:
         """Age of the price behind every P&L figure on this row.
 
@@ -192,7 +218,8 @@ class Position:
         d = asdict(self)
         d.update(dte=self.dte, open_pl=self.open_pl,
                  pct_of_max_credit=self.pct_of_max_credit, max_loss=self.max_loss,
-                 breakeven=self.breakeven, cushion=self.cushion)
+                 breakeven=self.breakeven, cushion=self.cushion,
+                 iv_change=self.iv_change)
         return d
 
 

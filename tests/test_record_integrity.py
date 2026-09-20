@@ -268,3 +268,46 @@ def test_an_empty_book_is_never_a_dead_loop(led):
     """Nothing to mark is not a failure to mark."""
     led.positions = []
     assert "hb-bad" not in _hb(led, 60 * 24 * 5, "weekend")
+
+
+# --- a stop on an untouched strike is a different trade --------------------
+def test_the_closed_row_says_where_the_stock_was(settings, led):
+    """`close_reason` says `stop_loss` for a spread the stock went through and
+    for one it never came near. Those are different failures with different
+    fixes -- one is the thesis being wrong, the other is the mark or the vol --
+    and the page reported them identically. `mark_spot` is written on every
+    mark, so on a closed row it is the reading the exit acted on."""
+    from pcs.dashboard import _closed_table
+    through = closed_row(-170.17, reason="stop_loss: 2.1x the credit")
+    through.mark_spot, through.short_strike = 90.0, 95.0
+    clear = closed_row(-303.93, reason="stop_loss: 52% of max loss")
+    clear.mark_spot, clear.short_strike = 100.0, 95.0
+    html = _closed_table([through, clear])
+    assert "<b>5.6%</b> through" in html
+    assert "<b>5.0%</b> clear" in html
+
+
+def test_a_row_with_no_spot_does_not_claim_the_strike_was_clear(settings, led):
+    """`cushion` is None without a spot, and None must not render as 0% clear.
+    An unknown cushion and a comfortable one are not the same fact."""
+    from pcs.dashboard import _closed_table
+    p = closed_row(-100.0)
+    p.mark_spot = 0.0
+    assert "clear" not in _closed_table([p])
+
+
+def test_the_history_note_counts_stops_that_never_touched_the_strike(settings, led):
+    """The live record's headline number: 3 of 5. Counted off losses rather
+    than `close_action`, because that field shipped after these rows and every
+    one of them would otherwise be uncountable."""
+    from pcs.dashboard import _history_panel
+    rows = []
+    for i, (pl, spot) in enumerate([(-209.31, 100.0), (-255.05, 96.0),
+                                    (-303.93, 101.0), (-136.69, 94.0),
+                                    (180.0, 110.0)]):
+        p = closed_row(pl, id=f"p{i}")
+        p.mark_spot, p.short_strike = spot, 95.0
+        rows.append(p)
+    led.positions = rows
+    html = _history_panel(led, settings)
+    assert "<b>3 of 4</b> losing trade(s) closed with the short strike never breached" in html
