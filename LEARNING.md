@@ -141,7 +141,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 504 tests, ruff clean.
+- 514 tests, ruff clean.
 
 ---
 
@@ -1579,6 +1579,21 @@ With commission at zero, every automated exit booked $0.06 per contract too
 little; with a commission set, most of a round trip. Both now call
 `Settings.spread_fees`, which the optimizer uses too. Closed rows were not
 rewritten.
+
+### Half days
+
+NYSE closes at 13:00 ET on 2026-11-27, 2026-12-24 and 2027-11-26 (ICE, *"NYSE
+Group Announces 2025, 2026 and 2027 Holiday and Early Closings Calendar"*; the
+July holidays in 2026 and 2027 are full closures, not half days). The clock
+assumed 16:00 on every weekday, so on a half day the 13:05-15:50 marks would
+have graded a book that had stopped trading as `live`, and `apply_exits` --
+whose only market gate is `is_open` -- would have fired stops on it.
+`session.EARLY_CLOSES` and `close_time()` fix that; the timers still run those
+afternoons, mark, and hold any exit until the next session.
+
+The holiday and half-day tables end 2027-12-31. Past that nothing fails -- the
+clock is just wrong. `doctor` now warns from 60 days out
+(`session.calendar_ends()`).
 
 ### Still open
 

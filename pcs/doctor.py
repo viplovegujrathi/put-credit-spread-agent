@@ -24,11 +24,13 @@ from dataclasses import dataclass
 
 from .config import LOG_DIR, PROPOSALS_JSON, Settings
 from .ledger import Ledger
-from .session import SessionState
+from .session import SessionState, calendar_ends
 
 # A gate either stops a fill outright or it does not. `warn` is for a fact worth
 # knowing that is not itself blocking -- a cap that is close, a stale watchlist.
 BLOCK, WARN, OK, INFO = "BLOCK", "WARN", "OK", "INFO"
+# NYSE publishes each year's dates well ahead; this is the nag to copy them in.
+CALENDAR_NOTICE_DAYS = 60
 
 
 @dataclass
@@ -132,6 +134,12 @@ def diagnose(led: Ledger, settings: Settings, sess: SessionState,
     if sess.is_open and sess.quote_quality != "live":
         A(Check(WARN, "quote quality", f"quotes grade {sess.quote_quality} -- sizing "
                 f"moves toward the natural credit, so fewer names clear the floor"))
+    ends = calendar_ends()
+    if sess.now_et.date() > ends - dt.timedelta(days=CALENDAR_NOTICE_DAYS):
+        A(Check(WARN, "market calendar", f"the holiday and half-day tables end {ends}. "
+                "After that every holiday reads as a trading day and every half day "
+                "as a full one -- nothing fails, the clock is just wrong.",
+                "add the next NYSE holiday and early-close dates to pcs/session.py"))
 
     # -- 3. room in the book -------------------------------------------------
     n, cap = len(led.open_positions), settings.max_open_positions

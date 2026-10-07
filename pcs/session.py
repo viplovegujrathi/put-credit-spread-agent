@@ -21,7 +21,7 @@ ET = ZoneInfo("America/New_York")
 # the paper record reflects fills the live account could actually have gotten.
 OPENING_SETTLE_MINUTES = 30
 
-# Full-day US market closures. Refresh annually.
+# Full-day US market closures. Refresh annually; `doctor` warns 60 days out.
 HOLIDAYS_2026 = {
     "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
     "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
@@ -31,6 +31,23 @@ HOLIDAYS_2027 = {
     "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
 }
 HOLIDAYS = HOLIDAYS_2026 | HOLIDAYS_2027
+
+# Half days: the session ends at 13:00 ET. Same NYSE announcement as the
+# holidays, so refresh the two together. NYSE gives "eligible options" until
+# 13:15 -- the broad index and ETF products, not the single-name chains here.
+EARLY_CLOSES = {"2026-11-27", "2026-12-24", "2027-11-26"}
+REGULAR_CLOSE = dt.time(16, 0)
+EARLY_CLOSE = dt.time(13, 0)
+
+
+def close_time(day: dt.date) -> dt.time:
+    return EARLY_CLOSE if day.isoformat() in EARLY_CLOSES else REGULAR_CLOSE
+
+
+def calendar_ends() -> dt.date:
+    """The last day the tables above know about. Past it nothing fails: every
+    holiday reads as a trading day and every half day as a full one."""
+    return dt.date(max(int(d[:4]) for d in HOLIDAYS), 12, 31)
 
 
 @dataclass
@@ -83,7 +100,10 @@ def state(now: dt.datetime | None = None,
                             "Market closed (holiday) - quotes are the prior session's close.")
 
     open_t = now.replace(hour=9, minute=30, second=0, microsecond=0)
-    close_t = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    # Hard-coded to 16:00 this read a half day's 13:00-16:00 as live: the
+    # 13:05..15:50 marks priced exits off a book that had stopped trading.
+    shut = close_time(now.date())
+    close_t = now.replace(hour=shut.hour, minute=shut.minute, second=0, microsecond=0)
     settle_until = open_t + dt.timedelta(minutes=settle_minutes)
     if now < open_t:
         return SessionState(now, True, "premarket", "stale",
@@ -97,12 +117,14 @@ def state(now: dt.datetime | None = None,
             f"still settling; no positions are opened until {settle_until:%H:%M} ET.",
             settle_until=settle_until)
     if now <= close_t:
+        half = f" Early close today at {close_t:%H:%M} ET." if shut != REGULAR_CLOSE else ""
         return SessionState(now, True, "open", "live",
-                            "Market open and settled - option quotes are live.")
-    # Robinhood/Yahoo keep serving the 16:00 print for a while after the bell.
+                            "Market open and settled - option quotes are live." + half)
+    # Robinhood/Yahoo keep serving the closing print for a while after the bell.
     if (now - close_t).total_seconds() <= 4 * 3600:
         return SessionState(now, True, "closed", "closing_snapshot",
-                            "Market closed - quotes are today's 16:00 ET closing snapshot. "
+                            f"Market closed - quotes are today's {close_t:%H:%M} ET closing "
+                            "snapshot. "
                             "Closing books are wider than intraday; re-confirm during RTH before approving.")
     return SessionState(now, True, "closed", "stale",
                         "Market closed - quotes are a stale end-of-day snapshot. "
