@@ -88,11 +88,20 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
 - `/etc/pcs/viewers` and `/etc/pcs/session.key` live outside `$APP` because
   `$APP` is rsynced with `--delete`. A wiped key logs everyone out; a wiped
   viewers file locks everyone out.
-- Anything written on the box by its own timers (`data/ledger.json`,
-  `data/watchlist.json`, `data/journal.json`, `data/settings.json`) must be in
-  BOTH `.gitignore` and the `rsync --delete` excludes in `deploy/bootstrap.sh`.
-  Missing either one means a redeploy silently replaces live state with a
-  laptop snapshot.
+- Anything written on the box by its own timers (`data/ledger.json` and its
+  `.lock`, `proposals.json`, `watchlist.json`, `journal.json`, `settings.json`,
+  `health.json`, `snapshots.json`, `last_screen*.json`) must be in `.gitignore`
+  AND in the `rsync --delete` excludes of BOTH `deploy/push.sh` and
+  `deploy/bootstrap.sh`. Missing any one means a redeploy silently replaces
+  live state with a laptop snapshot. `tests/test_deploy_excludes.py` pins it.
+- Every command that writes the ledger loads it inside `ledger.locked()` and
+  saves before leaving the block. A Ledger loaded before the lock and saved
+  inside it is the lost update of 49. Readers may load unlocked because
+  `save` is atomic (`config.atomic_write`).
+- A close costs `Settings.spread_fees(contracts)` whichever path takes it --
+  the same two-leg fee the optimizer charges to open. See 49.
+- Nothing is recorded as a measured vol unless it came off a live chain for
+  that leg: `Spread.iv_measured`, `mark_iv`. A placeholder is not a reading.
 
 ### Commands
 
@@ -132,7 +141,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 474 tests, ruff clean.
+- 504 tests, ruff clean.
 
 ---
 
@@ -1399,6 +1408,8 @@ Three things worth keeping:
 `Position.issuer` is empty on all 18 rows in the live ledger; every reader
 falls back to `symbol`, which is the correct key for every single-class name,
 so the history reads exactly as before and only new fills are grouped.
+**Wrong -- corrected in 49:** lookups key by the company NAME, so bare `symbol`
+never met them, and a legacy row counted against no company at all.
 
 **What this does NOT do:** the box has `max_positions_per_ticker = 5`, so the
 Alphabet pair would still have been allowed. The cap now measures the right
@@ -1493,3 +1504,93 @@ syncs the laptop's working tree to `/tmp/pcs-src` and installs from there;
 the box's own clone is not in that path and is not what runs. Checking
 `git log` in it says nothing about what is deployed -- read `/opt/pcs`.
 
+---
+
+## 49. Two timers write one ledger, and the later save won
+
+`propose` fires at 10:15 ET and `mark` at :05, :20, :35 and :50. `propose`
+loaded the ledger before sizing -- minutes of option-chain and earnings calls --
+and saved after it opened. A stop taken by the 10:20 mark was written to disk,
+and then `propose` saved the copy it had loaded at 10:15: the position open
+again, the debit back in cash, the `position_closed` event gone. The journal,
+written by the mark, had already booked the loss, so the two records disagreed
+and nothing raised. `tests/test_ledger_lock.py` reconstructs the sequence; on
+the old code it fails with *"propose saved over the stop the mark had taken"*.
+
+**Not yet checked: whether it has already happened on the box.** The signature
+would be a loss in the journal for a position the ledger still shows open, or
+closed later at a different debit. Reading that needs the box's files.
+
+The fix is `ledger.locked(settings)`: an exclusive `flock` on a sibling
+`data/ledger.json.lock`, the ledger loaded inside it, saved before it is
+released. `propose` (from writing proposals through auto-open), `approve`,
+`mark`, `close` and `reject` all write under it. A writer that cannot get the
+lock in 300 s raises `LedgerBusy` rather than going ahead unlocked; the next
+timer is fifteen minutes away. `status`, `dashboard`, `watch`, `learn`,
+`doctor` and `propose`'s early sizing read stay unlocked -- they never save,
+and both `ledger.json` and `proposals.json` are now written by
+`config.atomic_write` (sibling temp file, then rename), so a reader sees one
+whole version or the other. Before this, a save killed part-way left a
+truncated ledger that every later command failed to parse.
+
+The lock file is box state, so it went into `.gitignore` and both rsync
+excludes. Writing it down showed `health.json` had been in both excludes since
+44 and never in `.gitignore`. The three lists are now a test.
+
+### A placeholder is not a reading
+
+47 made `iv_at_open` and `mark_iv` the fields that would answer "did those
+stops fire on vol?". Both had an `... or None` guard against a fabricated value,
+and both only ever caught a zero:
+
+- the optimizer used a flat 0.30 when a chain quoted no IV, so the placeholder
+  became the spread's IV, its delta, its POP, and then `iv_at_open`;
+- a short leg with no IV borrowed the long leg's -- another strike;
+- the model provider stamps its 0.30 input on every strike, and every mark
+  stored it as `mark_iv`.
+
+The test that claimed to cover this fed in 0.0, a value no provider produces.
+Now no IV means no delta and POP `unavailable`; `Spread.iv_measured` is true
+only for a live chain quoting the short leg itself, and only that reaches
+`iv_at_open`; `mark_iv` is written only off a live chain. Existing rows were
+not rewritten. An `iv_at_open` of exactly `0.3` on one of them is most likely
+the placeholder, not a measurement.
+
+### The cooldown moved to companies, and the old rows came with it
+
+46 moved the per-name cap to companies and left the re-entry cooldown (40) on
+tickers, so a GOOGL stop left GOOG free to open the same morning. The cooldown
+is now keyed by `Position.company_key` at the fill, in `risk.check`, and on the
+watchlist, which had been passing no issuer at all.
+
+That surfaced the error in 46. Every lookup keys a name by
+`issuer_key(name)` -- `appleinc` for AAPL -- while a row with an empty
+`issuer` fell back to bare `AAPL`. The two never met, so an open legacy row did
+not count against its own company's cap. `Position.company_key` resolves an
+empty issuer through `universe.issuer_key_for`, which reads the cached
+constituent CSV, so an old row keys exactly as a new fill of the same name.
+Same shape as 42: a rule honoured at one call site and missed at the next.
+
+### A close costs the same whoever takes it
+
+Opening charges both legs plus commission. `apply_exits` charged one leg's
+$0.06 and no commission, and `close` re-charged whatever the opening had cost.
+With commission at zero, every automated exit booked $0.06 per contract too
+little; with a commission set, most of a round trip. Both now call
+`Settings.spread_fees`, which the optimizer uses too. Closed rows were not
+rewritten.
+
+### Still open
+
+- An expired position settles at the spot of the first run after expiry, not
+  at the expiry close. Listed, not fixed.
+- `close --debit` still fetches a chain before it looks at the override, so the
+  override cannot help when the fetch itself is what failed.
+- The ranking question from 44 -- 61.5% winners against a 67.9% break-even,
+  with ROC ranking favouring the strike nearest the minimum cushion -- is a
+  strategy decision. Not acted on.
+
+### Arming state, unchanged by this change
+
+No setting was read or written on the box. `paper_trading`, `auto_approve`
+(paper only), `auto_exit` and `mode` are as 42 records them.

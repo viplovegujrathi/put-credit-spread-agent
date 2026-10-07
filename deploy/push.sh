@@ -21,6 +21,7 @@ rsync -az --delete \
   --exclude 'data/settings.json' --exclude 'data/snapshots.json' \
   --exclude 'data/last_screen*.json' --exclude 'data/journal.json' \
   --exclude 'data/watchlist.json' --exclude 'data/health.json' \
+  --exclude 'data/ledger.json.lock' \
   "$ROOT"/ "$HOST":/tmp/pcs-src/
 
 echo "== bootstrapping"

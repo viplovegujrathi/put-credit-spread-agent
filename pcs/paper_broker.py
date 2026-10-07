@@ -132,13 +132,22 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
     if not sess.can_open_positions:
         raise MarketNotReady(sess.open_block_reason)
 
-    clear_on = ledger.cooling_off(settings).get(spread.symbol)
+    # The COMPANY NAME comes in and the key is derived here, once. Taking a
+    # ready-made key instead would let this caller and the watchlist disagree
+    # about what the key for a name is, and a cap keyed one way and counted the
+    # other silently stops binding -- which is the failure this whole field
+    # exists to fix, reproduced one level up. The cooldown and the per-name cap
+    # both read it: GOOG and GOOGL are one name for both.
+    key = universe.issuer_key(name, spread.symbol)
+
+    clear_on = ledger.cooling_off(settings).get(key)
     if clear_on:
         raise CoolingOff(
-            f"{spread.symbol} closed at a loss inside the last "
+            f"{spread.symbol}'s company closed at a loss inside the last "
             f"{settings.reentry_cooldown_days} day(s) and is not eligible again "
-            f"until {clear_on}. A stop reads a mark, and re-opening the same name "
-            f"straight after one pays for a bad print twice. Shorten the wait with "
+            f"until {clear_on} -- share classes count as one name. A stop reads a "
+            f"mark, and re-opening the same name straight after one pays for a bad "
+            f"print twice. Shorten the wait with "
             f"`./run.py config --set reentry_cooldown_days=N`, or 0 to switch it off.")
 
     # Re-checked at the fill, not only at proposal time, for the same reason as
@@ -146,12 +155,6 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
     # another position on the same company can open between writing it and
     # approving it. `issuer` groups share classes -- GOOG and GOOGL are one
     # name, and the cap that was supposed to stop that pair counted symbols.
-    # The COMPANY NAME comes in and the key is derived here, once. Taking a
-    # ready-made key instead would let this caller and the watchlist disagree
-    # about what the key for a name is, and a cap keyed one way and counted the
-    # other silently stops binding -- which is the failure this whole field
-    # exists to fix, reproduced one level up.
-    key = universe.issuer_key(name, spread.symbol)
     on_name = ledger.issuer_counts().get(key, 0)
     if on_name >= settings.max_positions_per_ticker:
         raise Concentrated(
@@ -198,10 +201,12 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
         basis=spread.basis, source=spread.source, quote_quality=spread.quote_quality,
         pct_off_high_at_open=pct_off_high, pct_from_dma50_at_open=pct_from_dma50,
         # Both already sit on the sized spread and were thrown away at fill.
-        # `spread.iv` falls back to 0.30 when the chain quotes none, so a zero
-        # is the one value that is definitely not a measurement.
+        # `spread.iv` can be the long leg's IV or a modeled chain's input, and
+        # neither is the short leg's vol -- only `iv_measured` says it is. The
+        # old guard here was `spread.iv or None`, which caught a zero the
+        # optimizer never produced and let its 0.30 placeholder straight in.
         short_delta_at_open=spread.short_delta,
-        iv_at_open=spread.iv or None,
+        iv_at_open=spread.iv if spread.iv_measured else None,
     )
     return ledger.open_position(pos)
 
@@ -333,11 +338,12 @@ def mark_positions(ledger: Ledger, settings: Settings, spots: dict[str, float]
         pos.mark_spot = spot or chain.spot or pos.mark_spot
         pos.marked_at = dt.datetime.now().isoformat(timespec="seconds")
         # Written on every mark, so a position that closes carries the vol at
-        # the mark the exit acted on. `or None` because the model provider
-        # falls back to a flat 0.30 and a fabricated constant must not be
-        # stored as a reading -- same rule as `iv_at_open` at the fill.
+        # the mark the exit acted on. Live chains only: the model provider
+        # stamps its flat 0.30 input on every strike, and a fabricated constant
+        # must not be stored as a reading -- same rule as `iv_at_open` at the
+        # fill. (This was `sq.iv or None`, which only ever caught a zero.)
         sq = chain.at(pos.short_strike)
-        pos.mark_iv = (sq.iv or None) if sq else None
+        pos.mark_iv = sq.iv if (sq and sq.iv > 0 and chain.basis == "live") else None
         fresh.add(pos.id)
         note = management_note(pos, settings.strategy())
         if note:
@@ -375,7 +381,7 @@ def apply_exits(ledger: Ledger, settings: Settings, fresh: set[str] | None = Non
     for pos, d in review(ledger, settings, fresh):
         if not d.act:
             continue
-        fees = round(settings.per_contract_fees * pos.contracts, 2)
+        fees = settings.spread_fees(pos.contracts)
         ledger.close_position(pos, d.debit, f"{d.action}: {d.reason}", fees=fees,
                               action=d.action)
         ledger.log("auto_exit", id=pos.id, symbol=pos.symbol, action=d.action,

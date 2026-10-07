@@ -70,7 +70,7 @@ class Spread:
     long_ask: float
     pkg_bid: float
     pkg_ask: float
-    iv: float
+    iv: float                   # short leg's IV, else the long leg's; 0.0 = neither quoted
     basis: str                  # "live" | "modeled"
     source: str
     quote_quality: str          # "live" | "closing_snapshot" | "stale"
@@ -78,6 +78,11 @@ class Spread:
     fill_risk: bool = False     # natural credit does not clear the $100 floor
     thin_oi: bool = False       # below the preferred OI, tradeable but watch it
     fees: float = 0.0
+    # True only when `iv` is the SHORT leg's own quote off a live chain. That
+    # is the one case it may be written onto a position as its entry vol: the
+    # long leg's IV is a different strike, and a modeled chain's IV is the
+    # input it was priced from. False on a ticket written before this existed.
+    iv_measured: bool = False
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -144,7 +149,7 @@ def build_spreads(chain: PutChain, spot: float, settings: Settings,
         return [], rejects
 
     dte = chain.dte
-    fees = round(2 * settings.per_contract_fees + 2 * settings.commission_per_contract, 2)
+    fees = settings.spread_fees()
     out: list[Spread] = []
     for sk in shorts:
         sq = by_strike[sk]
@@ -201,7 +206,12 @@ def build_spreads(chain: PutChain, spot: float, settings: Settings,
                        f"for a ${width:g} spread")
                 continue
 
-            iv = sq.iv or lq.iv or 0.30
+            # No placeholder. This used to fall back to a flat 0.30, which then
+            # became the delta, the POP estimate and the position's recorded
+            # entry vol -- a constant stored as a reading, in the one field the
+            # stop-loss question (LEARNING.md 47) is waiting on. Unquoted on
+            # both legs means no delta and no POP, said as such.
+            iv = sq.iv or lq.iv
             delta = sq.delta if sq.delta is not None else (
                 put_delta(spot, sk, iv, dte) if iv > 0 else None)
             if sq.pop_short is not None:
@@ -227,7 +237,8 @@ def build_spreads(chain: PutChain, spot: float, settings: Settings,
                 short_volume=sq.volume, long_volume=lq.volume,
                 short_bid=sq.bid, short_ask=sq.ask, long_bid=lq.bid, long_ask=lq.ask,
                 pkg_bid=pkg_bid, pkg_ask=pkg_ask,
-                iv=round(iv, 4), basis=chain.basis, source=chain.source,
+                iv=round(iv, 4), iv_measured=chain.basis == "live" and sq.iv > 0,
+                basis=chain.basis, source=chain.source,
                 quote_quality=sess.quote_quality, fees=fees,
                 fill_risk=(nat * 100) < strategy.min_credit_per_trade,
                 thin_oi=min(sq.open_interest, lq.open_interest) < settings.preferred_open_interest,

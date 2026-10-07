@@ -17,6 +17,9 @@ data/last_screen*.json
 # redeploy overwrites the live one with a stale snapshot.
 data/watchlist.json
 data/journal.json
+data/health.json
+# Held by every command that writes the ledger; see pcs/ledger.py `locked`.
+data/ledger.json.lock
 data/chain_requests.json
 data/rh_chains/*
 data/rh_raw/*

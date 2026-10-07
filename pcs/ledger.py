@@ -27,14 +27,25 @@ so an account can never commit more than it holds.
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import json
+import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .config import LEDGER_JSON, Settings
+from . import universe
+from .config import LEDGER_JSON, Settings, atomic_write
 
 OPEN, CLOSED, EXPIRED = "open", "closed", "expired"
+
+# How long a writer waits for another one to finish before giving up. A mark
+# holds the lock for one quote pull per open position; propose holds it only
+# for the fills. Minutes of waiting means something is wedged, and a loud
+# failure beats a timer that hangs until systemd kills it.
+LOCK_WAIT_S = 300.0
 
 # A close inside a dollar either way is fees, not a result -- the same line
 # `learning._result` draws between LOSS and SCRATCH. A $0.12 fee-only close is
@@ -125,6 +136,19 @@ class Position:
     @property
     def max_loss(self) -> float:
         return self.collateral
+
+    @property
+    def company_key(self) -> str:
+        """The company this position is on, as the per-name cap and the
+        re-entry cooldown both count it.
+
+        One property so the two cannot disagree. A row from before `issuer`
+        existed is resolved through the constituent cache, because every
+        lookup keys a name by its company: falling back to the bare ticker
+        keyed a legacy AAPL row as "AAPL" against lookups for "appleinc", so it
+        counted toward no cap at all. See `universe.issuer_key_for`.
+        """
+        return self.issuer or universe.issuer_key_for(self.symbol)
 
     @property
     def dte(self) -> int:
@@ -253,8 +277,10 @@ class Ledger:
         return led
 
     def save(self) -> Path:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps({
+        # Atomic: `watch`, `status` and the dashboard read this file without
+        # the lock, and a reader that catches it half-written gets a JSON
+        # error on the one file that holds the account.
+        atomic_write(self.path, json.dumps({
             "mode": self.mode, "starting_cash": self.starting_cash, "cash": round(self.cash, 2),
             "created_at": self.created_at,
             "positions": [asdict(p) for p in self.positions],
@@ -369,7 +395,7 @@ class Ledger:
         return out
 
     def issuer_counts(self) -> dict[str, int]:
-        """Open positions per COMPANY, keyed by `Position.issuer`.
+        """Open positions per COMPANY, keyed by `Position.company_key`.
 
         A count, not a set. `max_positions_per_ticker` above 1 is meaningless
         against a set -- membership answers "any?", and the cap asks "how
@@ -386,12 +412,18 @@ class Ledger:
         """
         out: dict[str, int] = {}
         for p in self.open_positions:
-            out[p.issuer or p.symbol] = out.get(p.issuer or p.symbol, 0) + 1
+            out[p.company_key] = out.get(p.company_key, 0) + 1
         return out
 
     def cooling_off(self, settings: Settings,
                     today: dt.date | None = None) -> dict[str, str]:
-        """Symbols too recently closed at a loss to re-enter -> the date each clears.
+        """Companies too recently closed at a loss to re-enter -> the date each clears.
+
+        Keyed by `Position.company_key`, the same key as `issuer_counts`, so
+        look it up with `universe.issuer_key(name, symbol)`. It was keyed by
+        ticker after the per-name cap had moved to companies, so a GOOGL stop
+        left GOOG free to open the same morning: the same issuer, the same
+        gap, and the same bad print paid for twice, which is the case below.
 
         The gap this fills: `max_positions_per_ticker` stops the account
         HOLDING two spreads on a name at once. Nothing stopped it re-opening
@@ -420,8 +452,8 @@ class Ledger:
             except ValueError:
                 continue          # an unparseable stamp must not bench forever
             clear = (closed + dt.timedelta(days=days)).isoformat()
-            if clear > today.isoformat() and clear > out.get(p.symbol, ""):
-                out[p.symbol] = clear
+            if clear > today.isoformat() and clear > out.get(p.company_key, ""):
+                out[p.company_key] = clear
         return out
 
     def by_id(self, pid: str) -> Position | None:
@@ -461,3 +493,49 @@ class Ledger:
 
 def new_id() -> str:
     return uuid.uuid4().hex[:8]
+
+
+class LedgerBusy(RuntimeError):
+    """Another process held the ledger for longer than `LOCK_WAIT_S`."""
+
+
+@contextmanager
+def locked(settings: Settings, path: Path | None = None,
+           wait: float = LOCK_WAIT_S) -> Iterator[Ledger]:
+    """The ledger, loaded under an exclusive lock held until the block exits.
+
+    Every command that CHANGES the ledger loads and saves inside one of these.
+    Two timers write this file -- `propose` at 10:15 and `mark` every fifteen
+    minutes -- and each used to load it, work for a while, and save whatever
+    it had loaded. `propose` held its copy across minutes of chain pulls and
+    earnings lookups, which straddles the 10:20 mark: a stop taken at 10:20
+    was then overwritten by propose's older copy, putting the position back
+    open and the debit back in cash, while the journal had already booked the
+    loss. Nothing raised; the close simply never happened.
+
+    Load inside the lock, not before it. A Ledger loaded earlier and saved in
+    here is the same lost update with extra steps.
+
+    Readers do not need this: `save` is atomic, so an unlocked read sees one
+    whole version or the other. The lock is a sibling file so it survives the
+    ledger itself being replaced by that atomic rename.
+    """
+    path = path or LEDGER_JSON
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_name(path.name + ".lock"), "a") as fh:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise LedgerBusy(
+                        f"another process has held {path.name} for over {wait:.0f}s; "
+                        f"nothing was changed. Check for a hung `mark` or `propose`."
+                    ) from None
+                time.sleep(0.2)
+        try:
+            yield Ledger.load(settings, path)
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)

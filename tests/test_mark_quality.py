@@ -236,6 +236,27 @@ def test_a_chain_quoting_no_vol_records_none_not_zero(settings, tmp_path, monkey
     assert pos.iv_change is None
 
 
+def test_a_modeled_chain_records_no_vol(settings, tmp_path, monkeypatch):
+    """The test above was the only guard, and it feeds in 0.0 -- a value no
+    provider produces. The model provider stamps its flat 0.30 INPUT on every
+    strike, and `sq.iv or None` passed that straight through as a reading."""
+    import pcs.paper_broker as pb
+    chain = two_leg_chain()
+    chain.basis = "modeled"
+    for q in chain.puts:
+        q.iv = 0.30
+    monkeypatch.setattr(pb, "get_chain", lambda *a, **k: chain)
+    led = Ledger.load(settings, path=tmp_path / "l.json")
+    pos = googl()
+    pos.iv_at_open = 0.30
+    led.positions = [pos]
+
+    mark_positions(led, settings, {"GOOGL": 335.26})
+
+    assert pos.mark_iv is None
+    assert pos.iv_change is None
+
+
 def test_half_a_reading_is_not_a_change():
     """Either end missing has to be None. Treating an unrecorded open vol as
     zero would divide by it; treating it as the current one would report that

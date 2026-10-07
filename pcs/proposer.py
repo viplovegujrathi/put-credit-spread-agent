@@ -12,7 +12,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .config import PROPOSALS_JSON
+from .config import PROPOSALS_JSON, atomic_write
 from .optimizer import Spread
 
 
@@ -77,7 +77,8 @@ def ticket(p: Proposal, settings=None) -> str:
         f"  return on collateral   {s['roc']:.1%}",
         f"  cushion {s['cushion']:.1%} OTM   breakeven ${s['breakeven']:,.2f}   "
         f"POP {s['pop_est'] if s['pop_est'] is None else format(s['pop_est'], '.0%')} ({s['pop_source']})",
-        f"  liquidity  short OI {s['short_oi']} / long OI {s['long_oi']}   IV {s['iv']:.1%}",
+        f"  liquidity  short OI {s['short_oi']} / long OI {s['long_oi']}   "
+        f"IV {format(s['iv'], '.1%') if s['iv'] else 'not quoted'}",
         f"  pricing    {s['basis']} via {s['source']} ({s['quote_quality'].replace('_', ' ')})",
         f"  earnings   {p.earnings_note}",
         f"  {p.rationale}",
@@ -102,8 +103,8 @@ def ticket(p: Proposal, settings=None) -> str:
 
 
 def save(proposals: list[Proposal], path: Path = PROPOSALS_JSON) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
+    # Atomic: `status` and `dashboard` read this without the ledger lock.
+    atomic_write(path, json.dumps({
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
         "proposals": [p.as_dict() for p in proposals],
     }, indent=2))

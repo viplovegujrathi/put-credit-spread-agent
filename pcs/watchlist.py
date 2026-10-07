@@ -171,8 +171,11 @@ def build(res, sized: list, led: Ledger, settings: Settings,
                                 else f"earnings {c.earnings_date} lands inside the "
                                      f"{e.expiration} window")
                 else:
+                    # The issuer, or this row reads READY while GOOGL's
+                    # cooldown is about to refuse GOOG at the fill.
                     v = risk.check(sc.spreads[0], c.sector, pv, settings,
-                                   sess=res.session, contracts=contracts)
+                                   sess=res.session, contracts=contracts,
+                                   issuer=universe.issuer_key(c.name, c.symbol))
                     e.signal, e.blockers = (READY, []) if v.ok else (BLOCKED, list(v.reasons))
         elif sc and e.signal == NO_FIT:
             e.reason = sc.chain_error or ""

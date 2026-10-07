@@ -8,10 +8,12 @@ out-of-date list.
 
 from __future__ import annotations
 
+import csv
 import datetime as dt
 import io
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -62,6 +64,30 @@ def issuer_key(name: str, symbol: str) -> str:
     # "Unknown" is `screener`'s sentinel for a universe lookup that missed, not
     # a company. Two of them are two different companies and must not merge.
     return sym if base in ("", "unknown") else base
+
+
+@lru_cache(maxsize=4)
+def _cached_names(path: Path = SP500_CSV) -> dict[str, str]:
+    """symbol -> company name from the cached constituent table; {} if unreadable."""
+    try:
+        with open(path, newline="") as fh:
+            return {r["symbol"]: r.get("name") or "" for r in csv.DictReader(fh)}
+    except (OSError, KeyError, csv.Error):
+        return {}
+
+
+def issuer_key_for(symbol: str, path: Path = SP500_CSV) -> str:
+    """`issuer_key` for a ledger row that stored only its ticker.
+
+    Rows from before `Position.issuer` existed have no company name, and
+    `issuer_key("", "AAPL")` is "AAPL" while every lookup -- the fill, the
+    proposal, the watchlist -- keys AAPL by its name. Keyed by ticker those
+    rows were invisible to the per-name cap and to the cooldown. The name comes
+    from the constituent cache instead, which is the same table the lookups
+    read; a symbol not in it keys by itself, as before.
+    """
+    sym = (symbol or "").strip().upper()
+    return issuer_key(_cached_names(path).get(sym, ""), sym)
 
 
 @dataclass

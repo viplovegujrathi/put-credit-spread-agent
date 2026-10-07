@@ -145,11 +145,31 @@ def test_a_name_cooling_off_is_blocked_not_ready(settings, led, live_session):
     from pcs.paper_broker import open_approved
     sp = build_spreads(make_chain(symbol="TST", spot=100.0), 100.0, settings,
                        live_session)[0][0]
-    pos = open_approved(led, sp, "Energy", 1, settings, "P1", "human", sess=live_session)
+    # The company name rides with the fill, as it does from every proposal.
+    pos = open_approved(led, sp, "Energy", 1, settings, "P1", "human",
+                        sess=live_session, name="TST Inc")
     led.close_position(pos, debit=pos.credit_open * 3, reason="stop_loss: test")
     assert pos.realized_pl < 0
 
     e = build(settings, live_session, [a_candidate("TST")], led).entries[0]
+    assert e.signal == watchlist.BLOCKED
+    assert any("re-entry cooldown" in b for b in e.blockers)
+
+
+def test_the_other_share_class_shows_the_cooldown_too(settings, led, live_session):
+    """The fill refuses GOOG while GOOGL cools off, so the row must not read
+    READY. The watchlist's risk check passed no issuer at all, so it could
+    only ever look the cooldown up by ticker."""
+    from pcs.paper_broker import open_approved
+    sp = build_spreads(make_chain(symbol="GOOGL", spot=100.0), 100.0, settings,
+                       live_session)[0][0]
+    pos = open_approved(led, sp, "Communication Services", 1, settings, "P1", "human",
+                        sess=live_session, name="Alphabet Inc. (Class A)")
+    led.close_position(pos, debit=pos.credit_open * 3, reason="stop_loss: test")
+
+    goog = a_candidate("GOOG", sector="Communication Services")
+    goog.name = "Alphabet Inc. (Class C)"
+    e = build(settings, live_session, [goog], led).entries[0]
     assert e.signal == watchlist.BLOCKED
     assert any("re-entry cooldown" in b for b in e.blockers)
 

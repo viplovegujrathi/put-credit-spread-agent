@@ -65,12 +65,16 @@ OVERRIDES_JSON = Path(os.environ.get("PCS_OVERRIDES")
                       or (STATE_DIR / "overrides.json"))
 
 
-def _atomic_write(path: Path, text: str) -> None:
+def atomic_write(path: Path, text: str) -> None:
     """Write via a sibling temp file and rename.
 
     Two processes now write settings: the CLI and the login service. A reader
     that catches a half-written file gets a JSON error on the file that holds
     the risk limits, so the write is never allowed to be partially visible.
+    The ledger and the proposals file go through here for the same reason.
+
+    The temp name is fixed, so two writers of the SAME file must not overlap.
+    The ledger guarantees that with `ledger.locked`.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -108,7 +112,7 @@ def set_override(key: str, value, path: Path | None = None) -> None:
     path = path or OVERRIDES_JSON
     cur = load_overrides(path)
     cur[key] = value
-    _atomic_write(path, json.dumps(cur, indent=2))
+    atomic_write(path, json.dumps(cur, indent=2))
 
 
 def clear_override(key: str, path: Path | None = None) -> bool:
@@ -122,7 +126,7 @@ def clear_override(key: str, path: Path | None = None) -> bool:
     if key not in cur:
         return False
     del cur[key]
-    _atomic_write(path, json.dumps(cur, indent=2))
+    atomic_write(path, json.dumps(cur, indent=2))
     return True
 
 
@@ -342,6 +346,18 @@ class Settings:
     # --- earnings ---------------------------------------------------------
     earnings_buffer_days: int = 2        # exclude if earnings <= expiry + buffer
 
+    # -- fees ---------------------------------------------------------------
+    def spread_fees(self, contracts: int = 1) -> float:
+        """Fees for one trip through a vertical: two legs, each contract.
+
+        Opening and closing both trade two legs, so both cost this. It is the
+        one formula for it -- the auto-exit used to charge one leg and no
+        commission while a manual `close` charged the full opening fee, so the
+        same close booked a different P&L depending on who made it.
+        """
+        return round((2 * self.per_contract_fees + 2 * self.commission_per_contract)
+                     * contracts, 2)
+
     # -- resolved rules ----------------------------------------------------
     def strategy(self) -> Strategy:
         """STRATEGY with this account's overrides applied.
@@ -463,7 +479,7 @@ class Settings:
 
     def save(self, path: Path | None = None) -> Path:
         path = path or (DATA_DIR / "settings.json")
-        _atomic_write(path, json.dumps(asdict(self), indent=2))
+        atomic_write(path, json.dumps(asdict(self), indent=2))
         return path
 
 

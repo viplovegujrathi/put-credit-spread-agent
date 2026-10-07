@@ -126,6 +126,80 @@ def test_only_the_name_that_lost_is_refused(settings, led, live_session):
     assert pos.symbol == "TST"
 
 
+# --- one company, whichever ticker lost -------------------------------------
+# The per-name cap moved to companies (LEARNING.md 46) and the cooldown stayed
+# on tickers, so a GOOGL stop left GOOG free to open the same morning: one
+# issuer, one gap, and the bad print this exists for paid for twice.
+ALPHA_A, ALPHA_C = "Alphabet Inc. (Class A)", "Alphabet Inc. (Class C)"
+
+
+def _now() -> str:
+    return dt.datetime.now().isoformat(timespec="seconds")
+
+
+def test_a_loss_in_one_share_class_benches_the_other(settings, led, live_session):
+    settings.reentry_cooldown_days = 5
+    googl = open_approved(led, a_spread(settings, live_session, "GOOGL"),
+                          "Communication Services", 1, settings, "P1", "human",
+                          sess=live_session, name=ALPHA_A)
+    led.close_position(googl, debit=googl.credit_open * 3, reason="stop_loss: test",
+                       action=exits.STOP_LOSS)
+    assert googl.realized_pl < 0
+
+    with pytest.raises(CoolingOff) as exc:
+        open_approved(led, a_spread(settings, live_session, "GOOG"),
+                      "Communication Services", 1, settings, "P2", "human",
+                      sess=live_session, name=ALPHA_C)
+    assert "share classes" in str(exc.value)
+
+
+def test_a_row_from_before_the_issuer_field_still_benches_its_company(
+        settings, led, live_session):
+    """The GOOGL stop that started all this predates `Position.issuer`. Keyed
+    by its bare ticker it would never meet a GOOG looked up by company."""
+    settings.reentry_cooldown_days = 5
+    led.positions = [closed(symbol="GOOGL", at=_now())]
+    assert led.positions[0].issuer == ""
+    with pytest.raises(CoolingOff):
+        open_approved(led, a_spread(settings, live_session, "GOOG"),
+                      "Communication Services", 1, settings, "P1", "human",
+                      sess=live_session, name=ALPHA_C)
+
+
+def test_a_single_class_row_from_before_the_field_still_matches(settings, led,
+                                                               live_session):
+    """The trap in moving the key: every lookup keys BA by its company NAME,
+    so a legacy row resolved to bare "BA" would silently stop benching the
+    name it lost on. It resolves through the constituent cache instead."""
+    import pandas as pd
+
+    from pcs import risk
+    from pcs.config import SP500_CSV
+    from pcs.universe import issuer_key
+    settings.reentry_cooldown_days = 5
+    led.positions = [closed(symbol="BA", at=_now())]
+    name = pd.read_csv(SP500_CSV).set_index("symbol")["name"]["BA"]
+    sp = a_spread(settings, live_session, "BA")
+    pv = risk.PortfolioView(0, 0, {}, {}, 3000, 3000, cooldowns=led.cooling_off(settings))
+    v = risk.check(sp, "Industrials", pv, settings, issuer=issuer_key(name, "BA"))
+    assert any("re-entry cooldown" in r for r in v.reasons)
+    with pytest.raises(CoolingOff):
+        open_approved(led, sp, "Industrials", 1, settings, "P1", "human",
+                      sess=live_session, name=name)
+
+
+def test_the_proposal_gate_sees_the_company_too(settings, led, live_session):
+    from pcs import risk
+    from pcs.universe import issuer_key
+    settings.reentry_cooldown_days = 5
+    led.positions = [closed(symbol="GOOGL", at=_now())]
+    pv = risk.PortfolioView(0, 0, {}, {}, 3000, 3000, cooldowns=led.cooling_off(settings))
+    v = risk.check(a_spread(settings, live_session, "GOOG"), "Communication Services",
+                   pv, settings, issuer=issuer_key(ALPHA_C, "GOOG"))
+    assert not v.ok
+    assert any("re-entry cooldown" in r and "GOOG" in r for r in v.reasons)
+
+
 def test_a_cooldown_can_never_hold_a_losing_position_open(settings, led, live_session):
     """The property that makes this safe to run unattended. Every gate added to
     the opening path has to be checked against the exit path, because a rule

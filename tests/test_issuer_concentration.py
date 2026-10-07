@@ -85,10 +85,15 @@ def test_two_share_classes_count_once(settings, led, live_session):
     assert led.issuer_counts() == {"ALPHABET": 2}
 
 
-def test_a_row_that_predates_the_field_falls_back_to_its_symbol(settings, led):
-    """Every position already in the live ledger has an empty `issuer`. They
-    have to keep counting as themselves -- an empty key shared by all of them
-    would read as one enormous position in a company called nothing."""
+def test_a_row_that_predates_the_field_counts_as_its_own_company(settings, led):
+    """Every position opened before `issuer` existed has it empty. They have
+    to keep counting as themselves -- an empty key shared by all of them would
+    read as one enormous position in a company called nothing.
+
+    And under the key a NEW proposal for that name looks up. This used to
+    assert {"BA": 1, "CLX": 1}, which pinned the bug: every lookup keys BA by
+    its company name, so a row keyed by bare ticker was counted where nothing
+    would ever ask, and the per-name cap could not see it."""
     led.positions = [
         Position(id="a", symbol="BA", sector="Industrials", expiration="2026-10-02",
                  short_strike=95.0, long_strike=90.0, width=5.0, contracts=1,
@@ -98,7 +103,10 @@ def test_a_row_that_predates_the_field_falls_back_to_its_symbol(settings, led):
                  short_strike=95.0, long_strike=90.0, width=5.0, contracts=1,
                  credit_open=1.16, credit_dollars=115.88, collateral=384.12,
                  opened_at="2026-09-01T14:39:25", opened_spot=100.0)]
-    assert led.issuer_counts() == {"BA": 1, "CLX": 1}
+    names = pd.read_csv(SP500_CSV).set_index("symbol")["name"]
+    ba, clx = issuer_key(names["BA"], "BA"), issuer_key(names["CLX"], "CLX")
+    assert ba != clx
+    assert led.issuer_counts() == {ba: 1, clx: 1}
 
 
 # --- the gate at proposal time --------------------------------------------

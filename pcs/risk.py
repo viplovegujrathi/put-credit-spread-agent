@@ -65,7 +65,7 @@ class PortfolioView:
     issuer_counts: dict[str, int]
     cash: float
     buying_power: float          # unencumbered cash, see Ledger.buying_power
-    # symbol -> ISO date it becomes eligible again. See Ledger.cooling_off.
+    # company key -> ISO date it becomes eligible again. See Ledger.cooling_off.
     # Defaulted so a caller that does not track closes still gets a valid view.
     cooldowns: dict[str, str] = field(default_factory=dict)
 
@@ -116,12 +116,13 @@ def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
     # A stop fires on a mark, and a mark can be wrong. Re-opening the name the
     # same session re-establishes the risk at a worse price, so a single bad
     # print gets paid for twice -- which is exactly what happened to GOOGL.
-    clear_on = pv.cooldowns.get(spread.symbol)
+    # Keyed by company like the cap above: a GOOGL stop benches GOOG too.
+    clear_on = pv.cooldowns.get(key)
     if clear_on:
         reasons.append(
-            f"re-entry cooldown: {spread.symbol} closed at a loss inside the last "
-            f"{settings.reentry_cooldown_days} day(s) and is eligible again on "
-            f"{clear_on}")
+            f"re-entry cooldown: the company behind {spread.symbol} closed at a loss "
+            f"inside the last {settings.reentry_cooldown_days} day(s) and is "
+            f"eligible again on {clear_on}")
     # The account balance is the floor beneath every other cap: a position can
     # never commit more max loss than there is free cash to pay it with. Earlier
     # proposals in this same batch have already spoken for their share.

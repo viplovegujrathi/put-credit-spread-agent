@@ -76,6 +76,7 @@ rsync -a --delete \
   --exclude 'data/settings.json' --exclude 'data/snapshots.json' \
   --exclude 'data/last_screen*.json' --exclude 'data/watchlist.json' \
   --exclude 'data/journal.json' --exclude 'data/health.json' --exclude 'logs' \
+  --exclude 'data/ledger.json.lock' \
   "$SRC"/ "$APP"/
 chmod +x "$APP"/deploy/*.sh "$APP"/run.py
 mkdir -p "$APP/data" "$APP/logs"

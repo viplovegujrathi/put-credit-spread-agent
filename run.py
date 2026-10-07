@@ -180,18 +180,24 @@ def cmd_propose(args, settings: Settings) -> int:
         for s in skipped:
             print(f"  - {s}")
 
-    path = proposer.save(props)
-    print(f"\nsaved: {path}")
-    clear = [p.id for p in props if p.risk_ok]
+    # Re-read under the lock. `led` above was loaded before the chain pulls and
+    # earnings lookups, which take minutes and straddle the 10:20 mark; filling
+    # against that copy and saving it would undo any close mark took in
+    # between. The proposals file is written in here too, because `approve`
+    # rewrites it under the same lock. See ledger_mod.locked.
+    with ledger_mod.locked(settings) as led:
+        path = proposer.save(props)
+        print(f"\nsaved: {path}")
+        clear = [p.id for p in props if p.risk_ok]
 
-    if clear and not settings.require_approval() and not args.no_auto_open:
-        _auto_open(props, led, settings, res.session)
-    elif clear:
-        print(f"\nNothing has been placed. To open one in the paper account:\n"
-              f"  ./run.py approve {clear[0]} --approver \"your name\"")
-        if not res.session.can_open_positions:
-            print(f"  (held until {res.session.settle_until:%H:%M} ET - "
-                  f"{res.session.open_block_reason.split(' - ')[0]})")
+        if clear and not settings.require_approval() and not args.no_auto_open:
+            _auto_open(props, led, settings, res.session)
+        elif clear:
+            print(f"\nNothing has been placed. To open one in the paper account:\n"
+                  f"  ./run.py approve {clear[0]} --approver \"your name\"")
+            if not res.session.can_open_positions:
+                print(f"  (held until {res.session.settle_until:%H:%M} ET - "
+                      f"{res.session.open_block_reason.split(' - ')[0]})")
     health.record("propose", detail=f"{len(props)} proposal(s), "
                   f"{sum(1 for x in props if x.risk_ok)} clear")
     dashboard.render(led, props, settings, res.session)
@@ -219,6 +225,8 @@ def _auto_open(props, led, settings: Settings, sess, journal=None) -> int:
     balance floor especially, since opening down the list eats the balance the
     later proposals were sized against. A refusal is per-proposal: it is
     reported and the batch continues, because the next one may well be smaller.
+
+    `led` must have been loaded inside `ledger_mod.locked`, which is still held.
     """
     print(f"\n{BAR}\nAUTO-OPEN -- human approval is OFF for this paper account\n{BAR}")
 
@@ -274,6 +282,14 @@ def _auto_open(props, led, settings: Settings, sess, journal=None) -> int:
 
 
 def cmd_approve(args, settings: Settings) -> int:
+    # The proposals are read inside the lock as well as the ledger: `propose`
+    # rewrites that file under it, and an approval that loaded the old batch
+    # first would save it back over the new one.
+    with ledger_mod.locked(settings) as led:
+        return _approve(args, settings, led)
+
+
+def _approve(args, settings: Settings, led) -> int:
     props = proposer.load()
     p = next((x for x in props if x.id == args.proposal_id), None)
     if p is None:
@@ -307,7 +323,6 @@ def cmd_approve(args, settings: Settings) -> int:
             print(f"refusing to record that approver: {bad}")
             return 1
 
-    led = ledger_mod.Ledger.load(settings)
     sess = session.state_for(settings)
     sp = Spread(**p.spread)
     print(proposer.ticket(p, settings))
@@ -343,14 +358,16 @@ def cmd_approve(args, settings: Settings) -> int:
 
 
 def cmd_reject(args, settings: Settings) -> int:
-    props = proposer.load()
-    p = next((x for x in props if x.id == args.proposal_id), None)
-    if p is None:
-        print(f"no proposal {args.proposal_id}")
-        return 1
-    p.status = "rejected"
-    p.risk_warnings.append(f"rejected by human: {args.reason}")
-    proposer.save(props)
+    # Same lock as `approve`: both rewrite the proposals file.
+    with ledger_mod.locked(settings):
+        props = proposer.load()
+        p = next((x for x in props if x.id == args.proposal_id), None)
+        if p is None:
+            print(f"no proposal {args.proposal_id}")
+            return 1
+        p.status = "rejected"
+        p.risk_warnings.append(f"rejected by human: {args.reason}")
+        proposer.save(props)
     print(f"proposal {p.id} ({p.symbol}) rejected: {args.reason}")
     return 0
 
@@ -369,7 +386,13 @@ def _journal_pass(journal, led, settings: Settings) -> list[str]:
 
 
 def cmd_mark(args, settings: Settings) -> int:
-    led = ledger_mod.Ledger.load(settings)
+    # Held for the whole run. A mark that loaded, priced for a minute and then
+    # saved would erase anything `propose` or `approve` opened in that minute.
+    with ledger_mod.locked(settings) as led:
+        return _mark(args, settings, led)
+
+
+def _mark(args, settings: Settings, led) -> int:
     if not led.open_positions:
         print("no open positions to mark.")
         for r in _journal_pass(learning.load(), led, settings):
@@ -574,7 +597,11 @@ def cmd_status(args, settings: Settings) -> int:
 
 
 def cmd_close(args, settings: Settings) -> int:
-    led = ledger_mod.Ledger.load(settings)
+    with ledger_mod.locked(settings) as led:
+        return _close(args, settings, led)
+
+
+def _close(args, settings: Settings, led) -> int:
     pos = led.by_id(args.position_id)
     if pos is None or pos.status != "open":
         print(f"no open position {args.position_id}")
@@ -584,7 +611,7 @@ def cmd_close(args, settings: Settings) -> int:
     if debit is None:
         print("could not price the close; pass --debit to override.")
         return 1
-    fees = round(pos.fees_paid, 2)
+    fees = settings.spread_fees(pos.contracts)
     led.close_position(pos, debit, args.reason, fees=fees,
                        action=ledger_mod.CLOSE_MANUAL)
     led.save()
