@@ -19,8 +19,8 @@ from .chains import PutChain, PutQuote, get_chain
 from .config import STRATEGY, Settings
 from .exits import ExitDecision, review
 from .ledger import CLOSE_EXPIRED, EXPIRED, Ledger, Position, new_id
-from .optimizer import Spread
-from .session import SessionState, slippage_frac, state_for
+from .optimizer import Spread, paper_fill_credit
+from .session import SessionState, state_for
 
 
 class OpenBlocked(RuntimeError):
@@ -67,9 +67,6 @@ class Concentrated(OpenBlocked):
     """
 
 
-PAPER_EXTRA_HAIRCUT = 0.10
-
-
 def simulated_fill_credit(spread: Spread, settings: Settings,
                           sess: SessionState | None = None) -> float:
     """Where a marketable limit would realistically fill, per share.
@@ -81,9 +78,8 @@ def simulated_fill_credit(spread: Spread, settings: Settings,
     basis, which handed the paper account a fill better than the ticket.
     """
     sess = sess or state_for(settings)
-    slip = max(settings.paper_slippage_frac, slippage_frac(sess, settings) + PAPER_EXTRA_HAIRCUT)
-    mid, nat = spread.credit_mid, spread.credit_nat
-    return round(max(min(mid - slip * (mid - nat), spread.credit), nat), 4)
+    return paper_fill_credit(spread.credit_mid, spread.credit_nat, spread.credit,
+                             sess, settings)
 
 
 def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,

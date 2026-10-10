@@ -40,6 +40,7 @@ from dataclasses import asdict, dataclass, field
 
 from .config import DATA_DIR, Settings
 from .ledger import EXPIRED, Ledger, Position
+from .session import state_for
 
 JOURNAL_JSON = DATA_DIR / "journal.json"
 
@@ -58,6 +59,11 @@ INSUFFICIENT, TENTATIVE, SUPPORTED = "insufficient", "tentative", "supported"
 # they mean the data is broken for that name. `open_blocked` is usually the
 # account being full, which is the risk caps working, not a fault of the
 # symbol -- it is recorded for the operator and deliberately not acted on.
+#
+# A mark that fails inside the opening range does not count either. The 09:35
+# and 09:50 marks meet option books that have not formed (bid 0, ask 0, no
+# broker mark) on names that price normally from 10:00 -- the session, not the
+# symbol. Those faults are still recorded, for the operator.
 MARK_FAILED, CHAIN_ERROR, OPEN_BLOCKED = "mark_failed", "chain_error", "open_blocked"
 QUARANTINE_KINDS = (MARK_FAILED, CHAIN_ERROR)
 
@@ -242,6 +248,17 @@ def blocked_symbols(journal: Journal, today: dt.date | None = None) -> set[str]:
             if dt.date.fromisoformat(q.until) > today}
 
 
+def _in_opening_range(at: str, settings: Settings) -> bool:
+    """Was this fault stamped inside the opening range? `record_fault` writes
+    the local clock with no zone, and `astimezone` reads a naive time as local,
+    so the box (UTC) and a laptop each read back their own stamps correctly."""
+    try:
+        when = dt.datetime.fromisoformat(at)
+    except ValueError:
+        return False
+    return state_for(settings, when.astimezone()).in_opening_range
+
+
 def self_repair(journal: Journal, settings: Settings,
                 today: dt.date | None = None) -> list[str]:
     """Expire finished quarantines, then bench symbols that keep failing.
@@ -273,6 +290,8 @@ def self_repair(journal: Journal, settings: Settings,
     counts: Counter[str] = Counter()
     for f in journal.faults:
         if f.kind not in QUARANTINE_KINDS or f.symbol in benched or not f.symbol:
+            continue
+        if f.kind == MARK_FAILED and _in_opening_range(f.at, settings):
             continue
         try:
             if dt.date.fromisoformat(f.at[:10]) >= window:

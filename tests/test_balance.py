@@ -160,3 +160,42 @@ def test_a_batch_cannot_collectively_outspend_the_balance(settings, live_session
     v = check(sp, "Materials", pv, settings, pending)
     assert not v.ok and any("available balance" in r for r in v.reasons)
     assert any("already committed" in r for r in v.reasons)
+
+
+# -- the per-trade cap, at the price the paper account fills ----------------
+def _near_cap(mid_short: float):
+    """One 95/80 put spread on a $100 stock: 15 wide, each leg $1.00 wide.
+    Package mid is `mid_short - 2.00`, natural is mid - 1.00, so sizing at
+    0.15 of the gap and filling at 0.25 of it are $10 of collateral apart."""
+    return make_chain(spot=100.0, strikes=[95.0, 80.0], spread=0.50,
+                      price_at=lambda k: mid_short if k == 95.0 else 2.00)
+
+
+def test_a_ticket_that_clears_the_cap_only_at_its_own_price_is_not_proposed(
+        led, settings, live_session):
+    """TTWO, 2026-10-08: sized at $984.87 on a $5.15 credit, filled at $4.97,
+    $1,003.12 of collateral, held -- the only clear proposal that day. The
+    screen checked the cap at the ticket and `open_approved` at the fill, and
+    the paper fill is worse than the ticket by design."""
+    chain = _near_cap(7.20)                  # ticket $995 collateral, fill $1,005
+    spreads, rejects = build_spreads(chain, 100.0, settings, live_session)
+    assert not [s for s in spreads if (s.short_strike, s.long_strike) == (95.0, 80.0)]
+    assert any("expected fill" in r for r in rejects)
+
+
+def test_a_ticket_with_room_for_the_fill_is_still_proposed_and_opens(
+        led, settings, live_session):
+    chain = _near_cap(7.30)                  # ticket $985, fill $995
+    spreads, _ = build_spreads(chain, 100.0, settings, live_session)
+    (sp,) = [s for s in spreads if (s.short_strike, s.long_strike) == (95.0, 80.0)]
+    pos = open_approved(led, sp, "Industrials", 1, settings, "P1", "human",
+                        sess=live_session)
+    assert sp.collateral < pos.collateral <= STRATEGY.max_collateral_per_trade
+
+
+@pytest.mark.parametrize("mid_short", [7.16, 7.18, 7.20, 7.22, 7.24, 7.26, 7.28, 7.30])
+def test_whatever_the_screen_proposes_the_fill_can_open(led, settings, live_session,
+                                                        mid_short):
+    for sp in build_spreads(_near_cap(mid_short), 100.0, settings, live_session)[0]:
+        fill = simulated_fill_credit(sp, settings, live_session)
+        assert round(sp.width * 100 - fill * 100, 2) <= STRATEGY.max_collateral_per_trade

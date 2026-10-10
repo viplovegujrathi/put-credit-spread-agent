@@ -98,6 +98,11 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
   saves before leaving the block. A Ledger loaded before the lock and saved
   inside it is the lost update of 49. Readers may load unlocked because
   `save` is atomic (`config.atomic_write`).
+- The screen and the paper fill read one fill price,
+  `optimizer.paper_fill_credit`. A cap checked only at the ticket is a ticket
+  refused at the fill (50).
+- A mark that fails inside the opening range is never counted toward a
+  quarantine (50).
 - A close costs `Settings.spread_fees(contracts)` whichever path takes it --
   the same two-leg fee the optimizer charges to open. See 49.
 - Nothing is recorded as a measured vol unless it came off a live chain for
@@ -141,7 +146,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 514 tests, ruff clean.
+- 529 tests, ruff clean.
 
 ---
 
@@ -262,6 +267,10 @@ entire run aborted with "could not resolve a listed expiration."
 chain, the batch-wide date is display-only, and a name with no listing in the
 window is skipped with a reason instead of taking the whole run down. Earnings
 are then checked against *that symbol's* expiration, not the batch's.
+
+*Only half true until 50.* The probe grew from one name to five, but
+`cmd_propose` still returned when all five missed the window -- 2026-10-06
+aborted that way with 112 names shortlisted. 50 removed the return.
 
 ## 9. Order the pipeline by what is expensive
 
@@ -1517,9 +1526,10 @@ written by the mark, had already booked the loss, so the two records disagreed
 and nothing raised. `tests/test_ledger_lock.py` reconstructs the sequence; on
 the old code it fails with *"propose saved over the stop the mark had taken"*.
 
-**Not yet checked: whether it has already happened on the box.** The signature
-would be a loss in the journal for a position the ledger still shows open, or
-closed later at a different debit. Reading that needs the box's files.
+**Checked on the box 2026-10-09 (see 50): no sign it ever happened.** The
+signature would be a loss in the journal for a position the ledger still shows
+open, or closed later at a different debit; all 21 journal outcomes match
+their ledger rows.
 
 The fix is `ledger.locked(settings)`: an exclusive `flock` on a sibling
 `data/ledger.json.lock`, the ledger loaded inside it, saved before it is
@@ -1608,4 +1618,150 @@ clock is just wrong. `doctor` now warns from 60 days out
 ### Arming state, unchanged by this change
 
 No setting was read or written on the box. `paper_trading`, `auto_approve`
+(paper only), `auto_exit` and `mode` are as 42 records them.
+
+---
+
+## 50. Twenty-one closed trades, and three ways the plumbing shapes them
+
+Read off the box 2026-10-09, read-only (no file written there). The three
+plumbing faults below are fixed in the same change, each with a test that
+fails on the code before it: `tests/test_learning.py` (opening range),
+`tests/test_expiration.py` (probe), `tests/test_balance.py` (cap at fill).
+
+| | |
+|---|---|
+| closed | 21: 14 take-profit wins, 7 stop-loss losses (66.7%) |
+| realised | **-$100.45** (wins +$1,797.56, losses -$1,898.01) |
+| average win / loss | +0.546 x credit ($128.40) / -1.148 x credit ($271.14) |
+| break-even | **67.8%** -- one average loss costs 2.1 average wins |
+| largest loss | APP, 15 wide, -$666.43 = 5.2 average wins |
+| since 44 | 8 trades, 6W/2L, about -$112 -- APP alone |
+
+Every win was a take-profit and every loss a stop; nothing has expired or run
+to max loss.
+
+### Every quarantine on the box came from the opening range
+
+117 of 118 `mark_failed` faults were recorded at the 09:35 (106) and 09:50 (11)
+marks, nearly all "short leg quoted one-sided (bid 0, ask 0, no broker mark)".
+The one exception is a CSCO rate limit at 15:05 on 2026-09-09. All five live
+quarantines (AVGO, ORCL, UBER, VST from 2026-10-05; APP from 2026-10-07) were
+built **entirely** from those two marks -- zero faults from after 10:00 --
+and AVGO, UBER and VST had just closed normally at take-profit.
+
+Only held positions are marked, so `learning_fault_threshold = 3` in 7 days
+means *any name held across three opening ranges is benched from proposals for
+5 days*, under a reason ("the chain will not price this name reliably") that
+the later marks contradict. Exits are unaffected -- `blocked_symbols` is read
+only by the proposal path -- and the mark itself correctly treats those
+positions as not fresh. The fault is the counting: a one-sided book inside the
+window `session` already grades as untrustworthy is the session, not the
+symbol.
+
+**Fixed:** `self_repair` skips a `mark_failed` fault stamped inside the opening
+range (`session.state_for`, so it follows `opening_settle_minutes`). The fault
+is still recorded. It is decided from the stamp at count time, not at record
+time, because the rows already in the journal would otherwise have re-benched
+UBER and ORCL on 2026-10-10 as their quarantines expired. Replayed over the
+box's journal from 2026-09-04, the new rule creates no quarantine at all; the
+five live ones expire on schedule (10-10, APP 10-12). `record_fault` stamps
+the local clock with no zone, and `_in_opening_range` reads it back as local,
+so a journal is only interpreted correctly on the machine that wrote it --
+true of the box's.
+
+### The expiration probe can still take a run down
+
+`resolve_batch_expiration` probes the first five shortlisted names and its
+docstring says the result is display-only. `cmd_propose` returns 1 when it
+comes back `None`, before `size_candidates` -- which resolves per symbol and
+needs no batch date -- ever runs. 2026-10-06: CSGP, PODD, ZTS, APTV and HONA
+list monthlies only (2026-10-16, then 2026-11-20 at 45 DTE), so 107 other names,
+weeklies among them, were never priced. Once in 30 runs.
+
+**Fixed:** a probe that finds nothing prints that and the run carries on; every
+name resolves its own expiration in `size_candidates`, as 8 intended. A run in
+which no name lists one now ends with each name's own "no listed expiration"
+line and a `propose` health record, instead of exit 1 and no record.
+
+### A ticket sized at the cap fills over it
+
+`optimizer.build_spreads` checks `max_collateral_per_trade` at the ticket
+credit (session slippage, 0.15 live). `simulated_fill_credit` fills at
+`max(paper_slippage_frac, slip + 0.10)` = 0.25 -- by design never better than
+the ticket. So any ticket within roughly a tenth of `(mid - nat) x 100` of
+$1,000 passes the screen and is refused at the fill. TTWO 2026-10-08: $984.87
+sized on $5.15, filled $4.97, $1,003.12, held; it was the only clear proposal
+that day.
+
+**Fixed:** the fill formula moved to `optimizer.paper_fill_credit` (with
+`PAPER_EXTRA_HAIRCUT`), and `paper_broker.simulated_fill_credit` calls it, so
+there is one formula. `build_spreads` rejects a spread whose collateral at that
+fill exceeds the cap ("collateral $N at the expected fill > $1,000"); the
+ticket's own `collateral`, ROC and ranking are unchanged. It applies in live
+mode too, where it is stricter than a limit order strictly needs -- it only
+removes tickets within a few dollars of the cap.
+
+### The funnel
+
+Since 2026-09-28, 569 of 937 per-name rejections (61%) were *no listed
+expiration in the 28-38 DTE window* -- monthly-only names, reachable on roughly
+a third of days. Next: short-leg OI 184, long-leg OI 62, earnings 48, leg
+bid/ask 48. Daily yield fell from 10-29 sized names in mid-September to 2-8 in
+October. `dte_window` is in `STRATEGY`, skill-fixed, so changing it is a
+strategy decision, not a setting.
+
+### Strike distance is the break-even
+
+Short delta at open (n = 15): min .29, median .33, max .38 -- a market-implied
+~67% chance of expiring out of the money, the same as the 67.8% break-even.
+Cushion at open 3.1-5.9% (median 3.9%), which is 0.19-0.47 (median 0.34) of a
+30-day one-sigma move. `min_otm_cushion` is a flat percentage, so on high-IV
+names it sits closer in sigma terms; ROC ranking then prefers the strike
+nearest that floor (44, 49). Strategy decision, not acted on.
+
+### Width sets the dollar loss
+
+| width | n | W | net | avg collateral |
+|---|---|---|---|---|
+| 4 | 2 | 2 | +$103.71 | $297 |
+| 5 | 10 | 6 | -$145.29 | $350 |
+| 10 | 8 | 6 | +$607.56 | $653 |
+| 15 | 1 | 0 | -$666.43 | $961 |
+
+The only per-trade dollar limit is the $1,000 collateral cap (33% of the
+account). `candidate_widths` in `STRATEGY` is read by nothing: the optimizer
+takes every listed width up to `MAX_WIDTH_SEARCH = 15`.
+
+### The vega-stop hypothesis, first two readings
+
+The first two stops to carry `mark_iv` were directional: RDDT IV .55 -> .54,
+short strike breached by 1.9%; APP .59 -> .54, breached by 8.2%. Vol fell into
+both. No support for 47's hypothesis yet, n = 2 -- not a reason to loosen
+anything.
+
+### What `lessons()` reports (tentative, n = 14-21)
+
+Pullback below the 50dma under 5.5%: 88% of 8 won (avg +$82.71); over 5.5%:
+33% of 6 (avg -$172.63). 15-25% off the 52w high: 80% of 5; 25%+ off: 56% of 9.
+Communication Services 43% of 7; IT 88% of 8. Cushion and IV split nothing.
+7 of 21 rows predate the entry features; IV rank is still not collected.
+RDDT re-entered 6 days after a loss (cooldown 5) and lost again, n = 1.
+
+### Checked after the 2026-10-07 deploy (8d5f1bb, b560f9e)
+
+- 514 tests pass on the box (Python 3.14.4). pytest `addopts = "-q"`, so
+  `pytest -q` prints dots only, no summary line -- count them.
+- Lock file created; no errors in 1 propose, 48 mark, 34 watch runs.
+- No `iv_at_open == 0.3` rows: the placeholder never reached the record.
+- UBER take-profit closing fee 0.12 = `spread_fees(1)`.
+- Half-day clock correct on the box; `calendar_ends` 2027-12-31.
+- 2026-10-08 propose finished 10:16 ET, before the 10:20 mark: the lock has
+  not yet been contended.
+
+Laptop facts: local time is CDT (ET = local + 1h) and `gh` is not installed.
+
+### Arming state, unchanged
+
+Settings were read on the box, not written. `paper_trading`, `auto_approve`
 (paper only), `auto_exit` and `mode` are as 42 records them.

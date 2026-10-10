@@ -37,6 +37,21 @@ from .session import SessionState, slippage_frac, spread_tolerance_multiplier
 
 MAX_WIDTH_SEARCH = 15.0     # collateral cap makes anything wider unusable anyway
 
+# The paper fill sits this much further from the mid than the sizing basis.
+PAPER_EXTRA_HAIRCUT = 0.10
+
+
+def paper_fill_credit(mid: float, nat: float, credit: float, sess: SessionState,
+                      settings: Settings) -> float:
+    """Where the paper broker fills a package sized at `credit`, per share.
+
+    Never better than the sizing credit, never worse than the natural. Kept
+    here, beside the sizing basis, so the screen's cap check and
+    `paper_broker.simulated_fill_credit` read the same number.
+    """
+    slip = max(settings.paper_slippage_frac, slippage_frac(sess, settings) + PAPER_EXTRA_HAIRCUT)
+    return round(max(min(mid - slip * (mid - nat), credit), nat), 4)
+
 
 @dataclass
 class Spread:
@@ -184,6 +199,16 @@ def build_spreads(chain: PutChain, spot: float, settings: Settings,
                 continue
             if collateral > strategy.max_collateral_per_trade:
                 reject(f"collateral ${collateral:.0f} > ${strategy.max_collateral_per_trade:.0f}")
+                continue
+            # Less credit is more collateral, and the paper fill is worse than
+            # the ticket by design. A ticket that clears the cap only at its own
+            # price is refused at the fill -- TTWO 2026-10-08, sized $984.87,
+            # filled $1,003.12 -- so the cap is checked at the fill as well.
+            filled = round(width * 100
+                           - paper_fill_credit(mid, nat, credit, sess, settings) * 100, 2)
+            if filled > strategy.max_collateral_per_trade:
+                reject(f"collateral ${filled:.0f} at the expected fill > "
+                       f"${strategy.max_collateral_per_trade:.0f}")
                 continue
             if (strategy.max_credit_per_trade is not None
                     and credit_dollars > strategy.max_credit_per_trade):

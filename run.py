@@ -148,17 +148,20 @@ def cmd_propose(args, settings: Settings) -> int:
         print(f"  benched by self-repair (not proposed): {', '.join(dropped)}"
               f"  --  ./run.py learn")
 
+    # Display only. The probe reads the first few names, and sizing resolves
+    # every name against its own chain -- so finding nothing here is not a
+    # reason to stop. It used to be: 2026-10-06's first five listed monthlies
+    # only and the run ended with 107 names unpriced.
     exp_probe = args.expiration or pipeline.resolve_batch_expiration(cands, settings)
+    lo, hi = STRATEGY.dte_window
     if exp_probe:
         print(f"\ntarget expiration: {exp_probe} "
               f"({(dt.date.fromisoformat(exp_probe) - dt.date.today()).days} DTE, "
               f"{dt.date.fromisoformat(exp_probe):%A}) -- names without a listing in the "
-              f"{STRATEGY.dte_window[0]}-{STRATEGY.dte_window[1]} DTE window resolve their own "
-              f"or are skipped")
+              f"{lo}-{hi} DTE window resolve their own or are skipped")
     else:
-        print(f"\n  ! no shortlisted name lists an expiration in the "
-              f"{STRATEGY.dte_window[0]}-{STRATEGY.dte_window[1]} DTE window.")
-        return 1
+        print(f"\ntarget expiration: none of the first names probed lists one in the "
+              f"{lo}-{hi} DTE window -- every name resolves its own or is skipped")
 
     print("  pulling option chains and sizing spreads...")
     sized = pipeline.size_candidates(cands, res, settings, expiration=args.expiration)

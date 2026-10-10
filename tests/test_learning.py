@@ -14,6 +14,7 @@ import pytest
 from pcs import learning
 from pcs.config import Settings
 from pcs.ledger import CLOSED, EXPIRED, OPEN, Ledger, Position
+from pcs.session import ET
 
 
 def _pos(pid="p1", symbol="TST", pl=50.0, reason="take_profit: 58% of max credit",
@@ -165,6 +166,58 @@ def test_faults_outside_the_window_do_not_count(settings):
     _faults(j, "TST", learning.MARK_FAILED, 9, "2026-07-01")
     learning.self_repair(j, settings, today=dt.date(2026, 9, 1))
     assert not j.quarantines
+
+
+def _stamp(et_iso):
+    """A fault time as `record_fault` writes it: this machine's clock, no zone."""
+    when = dt.datetime.fromisoformat(et_iso).replace(tzinfo=ET)
+    return when.astimezone().replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def _marks(j, sym, times):
+    for t in times:
+        j.faults.append(learning.Fault(
+            at=_stamp(t), kind=learning.MARK_FAILED, symbol=sym,
+            detail="could not mark: short leg 350 quoted one-sided (bid 0, ask 0, "
+                   "no broker mark)"))
+
+
+OPENING_MARKS = [f"2026-10-0{d}T{t}" for d in (1, 2, 5) for t in ("09:35", "09:50")]
+
+
+def test_failures_inside_the_opening_range_do_not_bench_a_symbol(settings):
+    """The box, 2026-10-05: AVGO, ORCL, UBER and VST benched in one run, APP
+    two days later, every one of them on faults from the 09:35 and 09:50
+    marks alone. Those marks meet option books that have not formed yet; the
+    same names priced on every mark from 10:05, and three of them had just
+    closed at take-profit. The session's fault, not the symbol's."""
+    j = learning.Journal()
+    _marks(j, "AVGO", OPENING_MARKS)
+    assert learning.self_repair(j, settings, today=dt.date(2026, 10, 5)) == []
+    assert not j.quarantines
+
+
+def test_the_same_failures_after_the_range_still_bench(settings):
+    j = learning.Journal()
+    _marks(j, "AVGO", [f"2026-10-0{d}T10:05" for d in (1, 2, 5)])
+    learning.self_repair(j, settings, today=dt.date(2026, 10, 5))
+    assert learning.blocked_symbols(j, dt.date(2026, 10, 5)) == {"AVGO"}
+
+
+def test_opening_range_faults_do_not_make_up_a_count(settings):
+    """Two real failures plus a morning's worth of unformed books is two."""
+    j = learning.Journal()
+    _marks(j, "AVGO", OPENING_MARKS + ["2026-10-02T11:05", "2026-10-05T14:20"])
+    learning.self_repair(j, settings, today=dt.date(2026, 10, 5))
+    assert not j.quarantines
+
+
+def test_the_range_is_the_configured_one(settings):
+    settings.opening_settle_minutes = 15
+    j = learning.Journal()
+    _marks(j, "AVGO", [f"2026-10-0{d}T09:50" for d in (1, 2, 5)])
+    learning.self_repair(j, settings, today=dt.date(2026, 10, 5))
+    assert learning.blocked_symbols(j, dt.date(2026, 10, 5)) == {"AVGO"}
 
 
 def test_a_quarantine_expires_on_its_own(settings):
