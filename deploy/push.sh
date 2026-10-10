@@ -30,5 +30,5 @@ ssh -t "$HOST" "sudo SRC=/tmp/pcs-src PCS_DOMAIN='$DOMAIN' bash /tmp/pcs-src/dep
 
 echo "== verifying on the box"
 ssh "$HOST" 'cd /opt/pcs && sudo -u pcs ./.venv/bin/python -m pytest -q 2>&1 | tail -3'
-ssh "$HOST" 'cd /opt/pcs && sudo -u pcs ./.venv/bin/python run.py config | head -12'
+ssh "$HOST" 'cd /opt/pcs && sudo -u pcs ./.venv/bin/python run.py config | sed -n 1,12p'
 ssh "$HOST" 'systemctl list-timers "pcs-*" --no-pager'

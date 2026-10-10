@@ -146,7 +146,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 529 tests, ruff clean.
+- 533 tests, ruff clean.
 
 ---
 
@@ -1664,8 +1664,10 @@ range (`session.state_for`, so it follows `opening_settle_minutes`). The fault
 is still recorded. It is decided from the stamp at count time, not at record
 time, because the rows already in the journal would otherwise have re-benched
 UBER and ORCL on 2026-10-10 as their quarantines expired. Replayed over the
-box's journal from 2026-09-04, the new rule creates no quarantine at all; the
-five live ones expire on schedule (10-10, APP 10-12). `record_fault` stamps
+box's journal from 2026-09-04, the new rule creates no quarantine at all.
+The five live ones did not all get to expire under it: see "The deploy that
+stopped after the timers" below -- a redeploy of the OLD code re-benched ORCL
+and UBER until 2026-10-15 before the new code arrived. `record_fault` stamps
 the local clock with no zone, and `_in_opening_range` reads it back as local,
 so a journal is only interpreted correctly on the machine that wrote it --
 true of the box's.
@@ -1760,6 +1762,41 @@ RDDT re-entered 6 days after a loss (cooldown 5) and lost again, n = 1.
   not yet been contended.
 
 Laptop facts: local time is CDT (ET = local + 1h) and `gh` is not installed.
+
+### The deploy that stopped after the timers
+
+2026-10-10, two `push.sh` runs. The first died at `== packages`:
+`unattended-upgr` held the dpkg lock. Harmless -- apt runs before the rsync
+into `/opt/pcs`, under `set -e`. Retry once the process is gone.
+
+The second printed the timer table and nothing after it: no self-check, no
+nginx or login-service steps, no `== verifying on the box`. Cause:
+`systemctl list-timers ... | head -4` under `set -euo pipefail`. When `head`
+exits before systemctl finishes writing, systemctl dies of SIGPIPE (141),
+pipefail makes that the line's status, and `set -e` ends `bootstrap.sh`;
+`push.sh`, also `set -e`, stops with it. 1 failure in 30 when the line was
+run alone on the box. Code and timers were already in place by then. Every
+`| head` in both scripts is now `sed -n 1,Np` (or `awk 'NR == 1'`), which reads
+to the end; `tests/test_deploy_scripts.py` keeps it that way. 0 in 30 for
+the sed form.
+
+That same run also shipped no new code: `push.sh` syncs the main checkout's
+working tree, and the main checkout had not pulled the new commit yet. Read
+`/opt/pcs` (grep for the change, count the test dots) to tell what is
+deployed -- not the deploy's exit, and not any clone.
+
+**A deploy runs self-repair, with whatever code it ships.** `bootstrap.sh`'s
+account-state step runs `run.py status`, `learn` and `dashboard`, and `learn`
+calls `self_repair`. The 01:36:51 UTC run on 2026-10-10 shipped b560f9e again,
+so the OLD rule ran: AVGO, ORCL, UBER and VST expired, and ORCL and UBER were
+benched again until 2026-10-15 on the same opening-range faults -- the re-bench
+this section predicted for Monday's first mark, two days early. The new code
+does not lift a quarantine (nothing does; they only expire), and a dry run on
+the box shows both expiring 10-15 and none renewed. The deploy that shipped
+db27f29 came a few minutes later.
+
+Quarantine dates are `dt.date.today()` on the box, which is UTC: a quarantine
+"until 2026-10-10" ends at 20:00 ET on 10-09, not at the next session.
 
 ### Arming state, unchanged
 

@@ -129,7 +129,7 @@ cp "$APP"/deploy/pcs-*.service "$APP"/deploy/pcs-*.timer /etc/systemd/system/
 # is scheduled on it. Test the capability rather than parsing a version number.
 if ! systemd-analyze calendar 'Mon..Fri 10:15 America/New_York' >/dev/null 2>&1; then
   die "this systemd cannot put a timezone in OnCalendar (needs v252+; this box has
-  $(systemctl --version | head -1)). The schedules are market-local, so either
+  $(systemctl --version | sed -n 1p)). The schedules are market-local, so either
   upgrade systemd or set the box clock with
       sudo timedatectl set-timezone America/New_York
   -- but only if nothing else on this box schedules against UTC. Not doing it
@@ -145,7 +145,9 @@ echo "  calendar expressions parse, in America/New_York"
 echo "  box clock left on $(timedatectl show -p Timezone --value)"
 systemctl daemon-reload
 systemctl enable --now pcs-mark.timer pcs-propose.timer pcs-watch.timer
-systemctl list-timers 'pcs-*' --no-pager | head -4
+# sed, not head: under pipefail a `head` that exits first SIGPIPEs systemctl,
+# and set -e ends the deploy here (2026-10-10, see tests/test_deploy_scripts.py).
+systemctl list-timers 'pcs-*' --no-pager | sed -n 1,4p
 echo "  ^ LEFT is what matters: propose fires 10:15 ET, i.e. 14:15 UTC in EDT."
 echo "    If NEXT reads 10:15 UTC the timezone did not take -- stop and say so."
 
@@ -288,7 +290,7 @@ if [ ! -d "/etc/letsencrypt/live/$DOMAIN" ]; then
   # so a run that cannot possibly succeed is worth catching before it spends one.
   say "pre-flight for $DOMAIN"
 
-  RESOLVED="$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)"
+  RESOLVED="$(getent hosts "$DOMAIN" | awk 'NR == 1 {print $1}')"
   MYIP="$(curl -fsS --max-time 5 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]' || true)"
   echo "  $DOMAIN -> ${RESOLVED:-<unresolved>}"
   echo "  this box  -> ${MYIP:-<unknown>}"
