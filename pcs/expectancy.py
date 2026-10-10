@@ -28,10 +28,23 @@ Nothing in this module may propose, size, open or close anything; like
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .config import Settings
 from .ledger import LOSS_FLOOR, Ledger, Position
+
+# Every change to how trades are PICKED, oldest first: (day it shipped, commit,
+# what changed). The record before the latest one was made by different code,
+# so the History tab also shows the record since it. Add a row in the same
+# commit as any change to entry selection. A change to the exits needs no row:
+# it moves the payoff, and `realised` already measures that.
+SELECTION_CHANGES: tuple[tuple[str, str, str], ...] = (
+    ("2026-10-10", "db27f29",
+     "opening-range mark failures stopped benching names, propose prices the "
+     "whole shortlist when the first five have no expiration in the window, and "
+     "the $1,000 cap is checked at the paper fill as well as the ticket"),
+)
 
 
 @dataclass(frozen=True)
@@ -150,6 +163,29 @@ def decided_win_rate(closed: list[Position]) -> tuple[float, int]:
     losses = sum(1 for p in closed if p.realized_pl <= LOSS_FLOOR)
     n = wins + losses
     return (wins / n if n else 0.0), n
+
+
+def opened_since(positions: list[Position], day: str) -> list[Position]:
+    """Positions opened on or after `day` (ISO date) -- the ones the code in
+    force from then picked. By date on purpose: `opened_at` is the box's clock
+    with no zone, and a change ships outside market hours."""
+    return [p for p in positions if (p.opened_at or "")[:10] >= day]
+
+
+def win_rate_interval(wins: int, n: int, z: float = 1.96) -> tuple[float, float] | None:
+    """Where the true win rate behind `wins` of `n` plausibly sits (Wilson, 95%).
+
+    Wilson rather than `p +/- z*se`: that one runs past 0% and 100% and calls
+    three wins from three a certainty. 14 of 21 is 45%-83% -- the honest size of
+    what twenty-one trades can say about a 68% line.
+    """
+    if n <= 0:
+        return None
+    p, z2 = wins / n, z * z
+    denom = 1 + z2 / n
+    centre = (p + z2 / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / denom
+    return max(0.0, centre - half), min(1.0, centre + half)
 
 
 @dataclass(frozen=True)

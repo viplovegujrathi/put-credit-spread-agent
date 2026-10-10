@@ -1124,6 +1124,76 @@ def _expectancy_cards(led: Ledger, settings: Settings) -> str:
         f'line &mdash; they can only change how often it is cleared.</li></ul></div>')
 
 
+def _since_change_panel(led: Ledger, settings: Settings) -> str:
+    """The record of what the CURRENT code picked, ahead of the whole record.
+
+    Positions opened before the latest row of `expectancy.SELECTION_CHANGES`
+    were picked by different code and stay out even if they closed after it.
+    The break-even is still the whole record's: the exits did not change, so
+    every closed trade measures what a win and a loss cost, and a handful of
+    new ones would measure it far worse. The win rate comes with its range,
+    because at this sample size the range is the finding.
+    """
+    day, commit, what = expectancy.SELECTION_CHANGES[-1]
+    picked = expectancy.opened_since(led.positions, day)
+    closed = [p for p in picked if p.status != "open"]
+    still_open = len(picked) - len(closed)
+    head = f"<h2>Since trade selection last changed &mdash; {_e(day)}</h2>"
+    changed = (f"<b>What changed</b> ({_e(commit)}): {_e(what)}. Positions opened "
+               f"before {_e(day)} are left out even if they closed after it &mdash; "
+               f"the old code picked them.")
+    open_txt = f" {still_open} still open." if still_open else ""
+
+    if not closed:
+        return (f'{head}<div class="rules" style="margin-bottom:14px"><ul><li>'
+                f"<b>Nothing the current code picked has closed yet.</b>{open_txt} "
+                f"{changed}</li></ul></div>")
+
+    rate, n = expectancy.decided_win_rate(closed)
+    wins = sum(1 for p in closed if p.realized_pl > 0)
+    pl = sum(p.realized_pl for p in closed)
+    iv = expectancy.win_rate_interval(wins, n)
+    be = expectancy.summary(led, settings).breakeven
+    dash = '<span class="dim">&mdash;</span>'
+
+    if iv is None or be is None:
+        verdict = ""
+    elif iv[0] > be:
+        verdict = (" The whole range is above the break-even even at the low end: "
+                   "on this sample the current code is making money.")
+    elif iv[1] < be:
+        verdict = (" The whole range is under the break-even even at the high end: "
+                   "on this sample the current code is losing money.")
+    else:
+        verdict = (f" The {be:.0%} break-even sits inside that range &mdash; too few "
+                   f"trades to tell yet whether the current code makes money.")
+    range_txt = (f" The true win rate behind {rate:.0%} of {n} could plausibly be "
+                 f"anywhere from {iv[0]:.0%} to {iv[1]:.0%} (95%).{verdict}"
+                 if iv else "")
+    gap = ("" if iv is None or be is None
+           else "c-pos" if iv[0] > be else "c-neg" if iv[1] < be else "")
+    rate_v = f'{rate:.0%} <span class="dim">of {n}</span>' if n else dash
+    range_v = f"{iv[0]:.0%}&ndash;{iv[1]:.0%}" if iv else dash
+    be_v = f"{be:.0%}" if be is not None else dash
+
+    return (
+        f'{head}<div class="cards" style="margin-bottom:8px">'
+        f'<div class="card"><div class="k">closed since {_e(day)}</div>'
+        f'<div class="v">{len(closed)}</div></div>'
+        f'<div class="card"><div class="k">win rate, decided only</div>'
+        f'<div class="v">{rate_v}</div></div>'
+        f'<div class="card {_pl_class(pl)}"><div class="k">realized P&amp;L</div>'
+        f'<div class="v">{_sign(pl, ",.2f")}</div></div>'
+        f'<div class="card {gap}"><div class="k">plausible win rate</div>'
+        f'<div class="v">{range_v}</div></div>'
+        f'<div class="card"><div class="k">break-even, whole record</div>'
+        f'<div class="v">{be_v}</div></div>'
+        f"</div>"
+        f'<div class="rules" style="margin-bottom:14px"><ul><li>'
+        f"<b>{len(closed)} closed, {wins} won.</b>{open_txt}{range_txt} {changed}"
+        f"</li></ul></div>")
+
+
 def _history_panel(led: Ledger, settings: Settings) -> str:
     """Closed positions plus the event log, newest first."""
     events = [e for e in reversed(led.events)
@@ -1191,7 +1261,8 @@ def _history_panel(led: Ledger, settings: Settings) -> str:
             f'taken in &mdash; a high win rate at low capture and a few full-size '
             f'stops is a losing book that reads as a winning one.{loss_note}'
             f'</li></ul></div>')
-    return (f"{summary}{_expectancy_cards(led, settings)}"
+    return (f"{_since_change_panel(led, settings)}"
+            f"<h2>Whole record</h2>{summary}{_expectancy_cards(led, settings)}"
             f"<h2>Closed positions</h2>{_closed_table(closed)}"
             f"<h2>Event log &mdash; every action, newest first</h2>"
             f'<div class="rules">{log}</div>{footer}')

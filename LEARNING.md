@@ -103,6 +103,9 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
   refused at the fill (50).
 - A mark that fails inside the opening range is never counted toward a
   quarantine (50).
+- Any change to how trades are picked adds a row to
+  `expectancy.SELECTION_CHANGES` in the same commit; the History tab measures
+  the record since the latest row (51). Exit changes need no row.
 - A close costs `Settings.spread_fees(contracts)` whichever path takes it --
   the same two-leg fee the optimizer charges to open. See 49.
 - Nothing is recorded as a measured vol unless it came off a live chain for
@@ -146,7 +149,7 @@ was deleted because it had drifted into saying things that were no longer true.
 - The dashboard defaults to a **light** palette with a header toggle for dark,
   persisted per browser in `localStorage` under `pcs-theme`. It does not follow
   `prefers-color-scheme` — see §17.
-- 533 tests, ruff clean.
+- 546 tests, ruff clean.
 
 ---
 
@@ -1802,3 +1805,56 @@ Quarantine dates are `dt.date.today()` on the box, which is UTC: a quarantine
 
 Settings were read on the box, not written. `paper_trading`, `auto_approve`
 (paper only), `auto_exit` and `mode` are as 42 records them.
+
+---
+
+## 51. The record since the code that picks trades last changed
+
+The History tab now leads with **Since trade selection last changed**, above
+the whole record. 21 closed trades were picked by code that kept changing
+underneath them, and 2026-10-10 alone changed which names can be proposed,
+which runs price anything and which tickets clear the cap. Whether the current
+code makes money is a question about the trades it picked.
+
+- `expectancy.SELECTION_CHANGES`: `(day, commit, what changed)`, oldest first.
+  The latest row is `("2026-10-10", "db27f29", ...)`.
+- `opened_since(positions, day)` filters by **open date** (`opened_at[:10] >=
+  day`). A position opened before the change and closed after it is left out,
+  because the old code picked it. That leaves out ORCL 133/130, opened before
+  10-10, so the panel reads "Nothing the current code picked has closed yet"
+  until a post-change trade closes.
+- The win rate shows next to its **Wilson 95% range**
+  (`win_rate_interval`), not on its own. 14 of 21 is 45%-83%, so twenty-one
+  trades cannot say whether the true rate sits above or below the 68%
+  break-even. 2 of 2 is 34%-100%.
+- The break-even comes from the **whole** record (`expectancy.summary`). The
+  exits did not change, so every closed trade measures what a win and a loss
+  cost. The verdict says "above the break-even even at the low end" or "under
+  it even at the high end" only when the whole range clears or misses it.
+  Otherwise it says "too few trades to tell yet".
+
+### Where going live stood on 2026-10-10
+
+Facts, not a decision. `readiness.assess` on the box: 5 of 9 checks pass and 3
+blocking checks are outstanding:
+- the broker's spread permission was never checked by the agent;
+- buying power is recorded as $0, and that reading is stale;
+- the go-live bar sits at 60%, under the record's own 68% break-even (44).
+
+The record so far: the first position opened 2026-09-01, and 21 closed trades
+give 14 wins and 7 losses (66.7%), realised -$100.45. A win averages 0.546x the
+credit and a loss 1.148x. Live mode places no order in code: it prints tickets
+for a human to place, and `auto_exit` acts in paper mode only.
+
+### Rendering the dashboard locally
+
+The browser pane cannot click or screenshot a `file://` page. To check a page
+visually, render it into the scratchpad and serve that folder with `python3 -m
+http.server` on 127.0.0.1. Keep any `.claude/launch.json` made for this out of
+the commit. On the Mac, `python` is not on PATH, so run `python3`.
+
+### Arming state, unchanged
+
+Settings were read on the box on 2026-10-10 (Friday 22:05 ET; nothing had run
+since the deploy), not written. `paper_trading`, `auto_approve` (paper only),
+`auto_exit` and `mode` are as 42 records them.
