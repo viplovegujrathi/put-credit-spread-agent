@@ -6,6 +6,8 @@ not matter that the book has room. These tests pin that order, and pin that a
 laptop with no systemd never reports a missing timer as a fault.
 """
 import datetime as dt
+import json
+import subprocess
 
 import pytest
 
@@ -186,3 +188,87 @@ def test_an_unreadable_proposals_file_does_not_crash(led, clear, open_market,
     bad.write_text("{ this is not json")
     monkeypatch.setattr(doctor, "PROPOSALS_JSON", bad)
     assert doctor.diagnose(led, clear, open_market)      # no exception
+
+
+# --- did the timers fire? --------------------------------------------------
+UNITS = ("pcs-propose.service", "pcs-mark.service", "pcs-watch.service")
+
+
+def _fake_systemctl(monkeypatch, props):
+    """Stand in for `systemctl show`, answering ONLY the properties it is asked
+    for, as the real one does. A fake that handed back every property would
+    hide a check that asks for the wrong one."""
+    def run(cmd, **_kw):
+        asked = next(a for a in cmd if a.startswith("--property=")).split("=", 1)[1]
+        out = "".join(f"{k}={props.get(k, '')}\n" for k in asked.split(","))
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+    monkeypatch.setattr(doctor.shutil, "which", lambda _: "/usr/bin/systemctl")
+    monkeypatch.setattr(doctor.subprocess, "run", run)
+
+
+def test_a_oneshot_unit_that_ran_is_not_reported_as_never_run(
+        led, clear, open_market, monkeypatch):
+    """The three services are Type=oneshot. A oneshot goes activating ->
+    inactive and never enters 'active', so systemd leaves ActiveEnterTimestamp
+    empty however many times it has run. 2026-10-13: all three had exited 0
+    that morning and the doctor still said "enabled but has never run"."""
+    _fake_systemctl(monkeypatch, {
+        "ActiveState": "inactive", "Result": "success", "ExecMainStatus": "0",
+        "ExecMainStartTimestamp": "Tue 2026-10-13 14:15:09 UTC"})
+    checks = doctor.diagnose(led, clear, open_market)
+    for unit in UNITS:
+        c = next(c for c in checks if c.label == unit)
+        assert c.state == doctor.OK, c
+        assert "2026-10-13 14:15:09 UTC" in c.detail
+    assert not any("never run" in c.detail for c in checks)
+
+
+def test_a_unit_that_never_started_still_warns(led, clear, open_market, monkeypatch):
+    """The fix for the false alarm must not silence the real one: a timer that
+    never fired has no start time at all."""
+    _fake_systemctl(monkeypatch, {"ActiveState": "inactive", "Result": "success"})
+    checks = doctor.diagnose(led, clear, open_market)
+    for unit in UNITS:
+        c = next(c for c in checks if c.label == unit)
+        assert c.state == doctor.WARN
+        assert "never run" in c.detail
+
+
+# --- pending tickets -------------------------------------------------------
+def _tickets(monkeypatch, tmp_path, rows):
+    path = tmp_path / "proposals.json"
+    path.write_text(json.dumps(rows))
+    monkeypatch.setattr(doctor, "PROPOSALS_JSON", path)
+
+
+def _ticket(pid, status, risk_ok, reasons=()):
+    return {"id": pid, "status": status, "risk_ok": risk_ok,
+            "risk_reasons": list(reasons), "created_at": "2026-10-13T10:15:09"}
+
+
+def test_a_ticket_held_by_a_portfolio_cap_is_not_a_refused_fill(
+        led, clear, open_market, tmp_path, monkeypatch):
+    """2026-10-13: HD opened and AVGO stayed pending because the sector was at
+    its cap. That is the risk layer working, not a gate inside open_approved
+    refusing a fill -- and the "portfolio limit hit" line already says so."""
+    _tickets(monkeypatch, tmp_path, [
+        _ticket("P-01", "pending", False,
+                ["sector concentration: already 2 position(s) in Information "
+                 "Technology, cap is 2"]),
+        _ticket("P-02", "approved", True)])
+    checks = doctor.diagnose(led, clear, open_market)
+    assert not any(c.label == "pending but auto-approve is on" for c in checks)
+    assert any(c.label == "portfolio limit hit" for c in checks)
+
+
+def test_a_clear_ticket_left_pending_under_auto_approve_warns(
+        led, clear, open_market, tmp_path, monkeypatch):
+    """The case the warning exists for: the ticket cleared every limit, the run
+    was allowed to open it, and it is still pending."""
+    _tickets(monkeypatch, tmp_path, [
+        _ticket("P-01", "pending", True),
+        _ticket("P-02", "pending", False, ["sector concentration: full"])])
+    checks = doctor.diagnose(led, clear, open_market)
+    c = next(c for c in checks if c.label == "pending but auto-approve is on")
+    assert c.state == doctor.WARN
+    assert c.detail.startswith("1 proposal(s)")      # the blocked one is not counted

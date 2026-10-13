@@ -1858,3 +1858,33 @@ the commit. On the Mac, `python` is not on PATH, so run `python3`.
 Settings were read on the box on 2026-10-10 (Friday 22:05 ET; nothing had run
 since the deploy), not written. `paper_trading`, `auto_approve` (paper only),
 `auto_exit` and `mode` are as 42 records them.
+
+---
+
+## 52. The doctor reported a healthy box as faulty
+
+2026-10-13, a health check of the live box. Every unit was fine -- `health.json`
+held 400 runs with none failed, no pcs unit was in `systemctl --failed`, the
+journals had no warnings -- yet `./run.py doctor` printed four warnings that
+were not faults. Two checks were wrong.
+
+- **"enabled but has never run", for all three services.** `_svc` read
+  `ActiveEnterTimestamp`. `pcs-propose`, `pcs-mark` and `pcs-watch` are
+  `Type=oneshot`, which go activating -> inactive and never enter `active`, so
+  that field is empty however often they have run. It now reads
+  `ExecMainStartTimestamp`, which a oneshot keeps. A unit that never fired has
+  neither, and still warns.
+- **"pending but auto-approve is on".** It fired when any ticket was pending
+  and any ticket in the run was clear. On 10-13 HD opened and AVGO stayed
+  pending because Information Technology was at its cap of 2, which is the risk
+  layer working. It now counts only pending tickets that are themselves clear of
+  the limits, the ones a gate inside `open_approved` could have refused.
+
+Not changed: the `propose.log` lines at the bottom are the last three `HELD`,
+`Error` or `Traceback` lines in the whole file, whatever their age, so they can
+be weeks old. Read the date in the line before acting on one.
+
+To tell a healthy box from a faulty one without the doctor: `systemctl show
+<unit> -p Result -p ExecMainStartTimestamp`, the run counts in
+`data/health.json`, and `HELD` lines under the latest `=== ... propose ===`
+header in `logs/propose.log`.

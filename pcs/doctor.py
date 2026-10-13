@@ -43,20 +43,25 @@ class Check:
 
 def _svc(unit: str) -> tuple[str, str]:
     """Ask systemd about a unit. Returns ("", "") anywhere systemd is not the
-    thing running this -- a laptop must not report a missing timer as a fault."""
+    thing running this -- a laptop must not report a missing timer as a fault.
+
+    The second value is when the unit's process last STARTED. Not
+    ActiveEnterTimestamp: these services are Type=oneshot, which go activating
+    -> inactive and never enter 'active', so that field is empty however often
+    they have run."""
     if not shutil.which("systemctl"):
         return "", ""
     try:
         r = subprocess.run(["systemctl", "show", unit, "--no-pager",
                             "--property=ActiveState,Result,ExecMainStatus,"
-                            "ActiveEnterTimestamp,NextElapseUSecRealtime"],
+                            "ExecMainStartTimestamp,NextElapseUSecRealtime"],
                            capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return "", ""
     if r.returncode != 0:
         return "", ""
     kv = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
-    return kv.get("Result", ""), kv.get("ActiveEnterTimestamp", "")
+    return kv.get("Result", ""), kv.get("ExecMainStartTimestamp", "")
 
 
 def _last_propose() -> tuple[list[dict], str]:
@@ -203,9 +208,13 @@ def diagnose(led: Ledger, settings: Settings, sess: SessionState,
         A(Check(INFO, "last propose run",
                 f"{_age(when)}: {len(props)} proposal(s), {len(clear)} clear of "
                 f"portfolio limits, {len(opened)} opened, {len(pending)} still pending"))
-        if pending and clear and not settings.require_approval():
+        # Only a ticket that cleared the portfolio limits can have been refused
+        # by a gate inside open_approved. One held back by a cap is the risk
+        # layer working, and "portfolio limit hit" below says which cap.
+        stuck = [p for p in pending if p.get("risk_ok")]
+        if stuck and not settings.require_approval():
             A(Check(WARN, "pending but auto-approve is on",
-                    f"{len(pending)} proposal(s) sat unopened on a run that was allowed "
+                    f"{len(stuck)} proposal(s) sat unopened on a run that was allowed "
                     f"to open them -- a gate inside open_approved refused the fill.",
                     "check logs/propose.log for the HELD lines"))
         blocked = [r for p in props for r in p.get("risk_reasons", [])]
