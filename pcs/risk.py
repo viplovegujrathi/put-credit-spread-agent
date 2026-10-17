@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .config import Settings
-from .optimizer import Spread
+from .optimizer import Spread, fill_collateral
 
 
 @dataclass
@@ -79,6 +79,13 @@ def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
     `Spread.collateral` is per contract; every cap here is a portfolio total, so
     the position size has to be multiplied in or a 2-lot is checked as a 1-lot.
 
+    With a session, the collateral cap and the balance are sized at the
+    EXPECTED PAPER FILL, not the ticket: that is the figure `open_approved`
+    holds them to, and a ticket that fits only at its own price is a ticket
+    proposed, auto-approved and refused at the fill on every run. Without one,
+    it is the ticket's figure. `pending` collateral must be the same basis --
+    `pipeline.build_proposals` uses `fill_collateral` too.
+
     `issuer` groups share classes of one company; it defaults to the symbol,
     which is the right key for every single-class name in the index.
     """
@@ -86,7 +93,8 @@ def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
     reasons: list[str] = []
     warnings: list[str] = []
 
-    need = round(spread.collateral * contracts, 2)
+    need = fill_collateral(spread, sess, settings, contracts)
+    at_fill = " at the expected fill" if sess is not None else ""
     committed = sum(q.collateral for q in pending)
     used = pv.open_collateral + committed
     count = pv.open_count + len(pending)
@@ -99,7 +107,7 @@ def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
 
     if used + need > settings.max_total_collateral:
         reasons.append(
-            f"portfolio collateral cap: ${used:,.0f} open + ${need:,.0f} "
+            f"portfolio collateral cap: ${used:,.0f} open + ${need:,.0f}{at_fill} "
             f"would exceed the ${settings.max_total_collateral:,.0f} limit")
     if count >= settings.max_open_positions:
         reasons.append(f"max open positions ({settings.max_open_positions}) already reached")
@@ -130,7 +138,7 @@ def check(spread: Spread, sector: str, pv: PortfolioView, settings: Settings,
     cost = round(need + spread.fees * contracts, 2)
     if cost > free:
         reasons.append(
-            f"exceeds available balance: ${cost:,.2f} required, ${free:,.2f} free"
+            f"exceeds available balance: ${cost:,.2f} required{at_fill}, ${free:,.2f} free"
             + (f" (${pv.buying_power:,.2f} in the account less ${committed:,.2f} "
                f"already committed to earlier proposals in this batch)" if committed else ""))
 

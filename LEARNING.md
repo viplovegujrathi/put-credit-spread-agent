@@ -57,7 +57,9 @@ Everything that can refuse is enforced in code, not in instructions:
    filled collateral breaches the $1,000 per-trade cap or takes the book over
    `max_total_collateral`. `BelowCreditFloor` when the filled credit is under
    $100 a contract (53).
-4. **Portfolio caps** — `risk.check`, batch-aware via `pending`.
+4. **Portfolio caps** — `risk.check`, batch-aware via `pending`. With a
+   session, collateral and balance are sized at the expected paper fill
+   (`optimizer.fill_collateral`), and so is each `pending` entry (53).
 5. **Earnings** — `pipeline.apply_earnings`; an unknown date blocks.
 
 Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
@@ -1931,10 +1933,32 @@ pins it.
   two since-change tests that pinned the 10-10 row and a 10-12 "after" date
   now read the latest row.
 
-**Not fixed: the screen side.** For the per-trade cap the screen also rejects
-a ticket at the expected fill (50). For these two it does not, so a ticket
-within a few dollars of either limit is still proposed, auto-approved and held
-at the fill, every run, as TTWO was before 50.
+### The screen side, 2026-10-17
+
+The fill-time checks alone left a ticket within a few dollars of either limit
+proposed, auto-approved and held at the fill on every run, as TTWO was before
+50. The screen now checks both at the expected fill as well:
+
+- `build_spreads` rejects a spread whose credit at the expected fill is under
+  the floor ("credit $N at the expected fill < $100"), beside the cap check
+  at the same fill.
+- `optimizer.fill_collateral(sp, sess, settings, contracts)` is the collateral
+  at the paper fill, by the broker's own formula. `risk.check` sizes the
+  portfolio cap and the balance with it when it has a session, and
+  `build_proposals` uses it for each `pending` entry and the multi-lot
+  per-trade check. With no session it is the ticket's figure, so a caller
+  with no session gets the old behaviour.
+- Replayed on the box's 10-16 tickets and ledger: the expected fills match
+  the recorded fills to the cent for LEN, LULU, ADBE and C, and DAL's
+  expected fill is its real $98.87, so DAL is not proposed. The batch clears
+  four, at $2,011.24 with ORCL. PNC and PEP stay blocked by the portfolio
+  cap. Another DAL strike pair might have qualified instead; the chain from
+  that moment was not saved, so that is unknown.
+
+The fill checks stay. They now catch a fill whose session is worse than the
+one the ticket was sized in, such as a manual approve once the quotes have gone
+stale (0.60 of the gap against 0.25 live). `tests/test_fill_caps.py` covers
+both sides.
 
 **Not a fault:** ORCL's mark of $1.85 on the 133/130 with spot $128.50 (under
 both strikes, 14 DTE) looks wrong, because the spread would settle at $3.00

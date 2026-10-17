@@ -106,6 +106,23 @@ class Spread:
         return f"{self.symbol} {self.short_strike:g}/{self.long_strike:g}p {self.expiration}"
 
 
+def fill_collateral(sp: Spread, sess: SessionState | None, settings: Settings,
+                    contracts: int = 1) -> float:
+    """Collateral at the price the paper broker fills `sp`, in dollars.
+
+    The fill takes in less credit than the ticket, which is more collateral,
+    and `open_approved` holds every cap to this figure. A portfolio total built
+    from `sp.collateral` passes a batch the fill then refuses: 2026-10-16
+    summed five tickets to $2,396.64 under the $2,400 cap and filled them at
+    $2,412.37. With no session there is no fill to predict, so it is the
+    ticket's own figure.
+    """
+    if sess is None:
+        return round(sp.collateral * contracts, 2)
+    fill = paper_fill_credit(sp.credit_mid, sp.credit_nat, sp.credit, sess, settings)
+    return round((sp.width * 100 - fill * 100) * contracts, 2)
+
+
 def _leg_ok(q: PutQuote, s: Settings, mult: float) -> tuple[bool, str]:
     if q.ask <= 0:
         return False, "no offer"
@@ -204,11 +221,17 @@ def build_spreads(chain: PutChain, spot: float, settings: Settings,
             # the ticket by design. A ticket that clears the cap only at its own
             # price is refused at the fill -- TTWO 2026-10-08, sized $984.87,
             # filled $1,003.12 -- so the cap is checked at the fill as well.
-            filled = round(width * 100
-                           - paper_fill_credit(mid, nat, credit, sess, settings) * 100, 2)
+            fill = paper_fill_credit(mid, nat, credit, sess, settings)
+            filled = round(width * 100 - fill * 100, 2)
             if filled > strategy.max_collateral_per_trade:
                 reject(f"collateral ${filled:.0f} at the expected fill > "
                        f"${strategy.max_collateral_per_trade:.0f}")
+                continue
+            # The floor, for the same reason: DAL 2026-10-16 was sized at
+            # $100.32 and filled at $98.87, which the fill now refuses.
+            if round(fill * 100, 2) < strategy.min_credit_per_trade:
+                reject(f"credit ${fill * 100:.2f} at the expected fill < "
+                       f"${strategy.min_credit_per_trade:.0f}")
                 continue
             if (strategy.max_credit_per_trade is not None
                     and credit_dollars > strategy.max_credit_per_trade):

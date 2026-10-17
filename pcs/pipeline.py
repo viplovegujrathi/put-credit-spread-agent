@@ -182,10 +182,14 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
         if blocked and not allow_unknown_earnings:
             skipped.append(f"{c.symbol}: {note}")
             continue
+        # Every collateral figure here is the expected paper fill's, which is
+        # what `open_approved` checks: the per-trade cap for a multi-lot, and
+        # the batch total that `pending` carries into the portfolio cap.
+        filled = optimizer.fill_collateral(sp, res.session, settings, contracts)
         cap = settings.strategy().max_collateral_per_trade
-        if contracts * sp.collateral > cap:
+        if filled > cap:
             skipped.append(f"{c.symbol}: {contracts} contracts would put collateral "
-                           f"${contracts * sp.collateral:,.0f} over the per-trade "
+                           f"${filled:,.0f} at the expected fill over the per-trade "
                            f"${cap:,.0f} cap")
             continue
         issuer = universe.issuer_key(c.name, c.symbol)
@@ -205,6 +209,5 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
         proposals.append(p)
         seq += 1
         if verdict.ok:
-            pending.append(risk.Pending(c.symbol, c.sector,
-                                        sp.collateral * contracts, issuer))
+            pending.append(risk.Pending(c.symbol, c.sector, filled, issuer))
     return proposals, skipped
