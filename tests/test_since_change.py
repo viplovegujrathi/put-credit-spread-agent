@@ -8,12 +8,14 @@ it picked, and the page answered a different one. It also answered it with a
 bare percentage: 67% of 21 reads like a measurement, when the true rate behind
 it could be anywhere from about 45% to 83%.
 """
+import datetime as dt
+
 import pytest
 
 from pcs import dashboard, expectancy
 from pcs.ledger import Ledger, Position
 
-CHANGE = expectancy.SELECTION_CHANGES[-1][0]
+CHANGE, COMMIT = expectancy.SELECTION_CHANGES[-1][:2]
 
 
 @pytest.fixture
@@ -32,14 +34,16 @@ def _pos(ident, pl, opened, closed="2026-11-20T15:00:00", status="closed"):
 
 
 BEFORE = "2026-10-08T14:16:00"
-AFTER = "2026-10-12T14:16:00"
+# The day after the latest change, so a new row does not turn these into
+# trades the old code picked.
+AFTER = f"{dt.date.fromisoformat(CHANGE) + dt.timedelta(days=1)}T14:16:00"
 
 
 # --- which trades count ----------------------------------------------------------
-def test_the_latest_change_is_the_one_that_shipped_the_fixes():
+def test_the_latest_change_is_the_fill_time_caps():
     day, commit, what = expectancy.SELECTION_CHANGES[-1]
-    assert (day, commit) == ("2026-10-10", "db27f29")
-    assert what
+    assert (day, commit) == ("2026-10-17", "578d3cc")
+    assert "credit floor" in what
 
 
 def test_changes_are_listed_oldest_first():
@@ -89,7 +93,7 @@ def test_the_panel_counts_only_what_the_current_code_picked(led, settings):
                      _pos("new3", 0.0, AFTER, status="open")]
     html = dashboard._since_change_panel(led, settings)
     assert f"Since trade selection last changed &mdash; {CHANGE}" in html
-    assert "db27f29" in html
+    assert COMMIT in html
     assert ">2</div>" in html and "1 still open" in html     # closed since, open since
     assert "+$115.00" in html                                # not the -$666.43
     assert "-$666" not in html

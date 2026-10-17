@@ -44,6 +44,10 @@ SELECTION_CHANGES: tuple[tuple[str, str, str], ...] = (
      "opening-range mark failures stopped benching names, propose prices the "
      "whole shortlist when the first five have no expiration in the window, and "
      "the $1,000 cap is checked at the paper fill as well as the ticket"),
+    ("2026-10-17", "578d3cc",
+     "the $2,400 portfolio cap and the $100 credit floor are checked at the "
+     "paper fill as well as the ticket, so a fill that lands outside either is "
+     "held instead of opened"),
 )
 
 

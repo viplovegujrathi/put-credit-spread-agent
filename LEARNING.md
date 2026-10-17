@@ -1924,6 +1924,13 @@ pins it.
   so filled in the wall-clock session: they passed in market hours and failed
   after it (stale, slippage 0.5). They now pass `live_session`.
 
+- `expectancy.SELECTION_CHANGES` has a row for it, `("2026-10-17", "578d3cc",
+  ...)`: a refused fill changes which trades open. It is dated the first day
+  no old-code fill can land on, so the five 10-16 positions are out of the
+  History tab's since-the-change record (51). DAL would not have opened. The
+  two since-change tests that pinned the 10-10 row and a 10-12 "after" date
+  now read the latest row.
+
 **Not fixed: the screen side.** For the per-trade cap the screen also rejects
 a ticket at the expected fill (50). For these two it does not, so a ticket
 within a few dollars of either limit is still proposed, auto-approved and held
