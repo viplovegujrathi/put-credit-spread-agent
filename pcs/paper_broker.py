@@ -40,6 +40,15 @@ class InsufficientFunds(OpenBlocked):
     """Raised when a position's max loss exceeds the account's free balance."""
 
 
+class BelowCreditFloor(OpenBlocked):
+    """Raised when the fill takes in less than the per-trade credit floor.
+
+    The ticket clears the floor at the credit it was sized at, and the paper
+    fill is worse than that by design, so a ticket sized just over $100 can
+    fill under it -- DAL, 2026-10-16, sized at $100.32 and filled at $98.87.
+    """
+
+
 class TradingDisabled(OpenBlocked):
     """Raised when the master switch is off. Entries only -- exits keep running,
     because pausing new risk is not a reason to stop managing existing risk."""
@@ -98,7 +107,9 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
 
     The balance gate is checked against the *filled* collateral, not the
     proposal's. A worse fill means less credit, which means MORE collateral, so
-    a spread sized inside the balance can land outside it.
+    a spread sized inside the balance can land outside it. The per-trade and
+    portfolio collateral caps and the credit floor are re-checked at the fill
+    for the same reason.
 
     `name` is the company name from the constituent table, not the ticker: it
     is what tells GOOG and GOOGL apart from two unrelated symbols. Absent, the
@@ -183,6 +194,29 @@ def open_approved(ledger: Ledger, spread: Spread, sector: str, contracts: int,
             f"per-trade cap. The ticket was sized at ${spread.collateral * contracts:,.2f} on a "
             f"${spread.credit:.2f} credit; the fill came in at ${fill:.2f}, and a smaller credit "
             f"means larger collateral.")
+    # `risk.check` sums the TICKETS against the portfolio cap, and every fill
+    # takes in less credit than its ticket. 2026-10-16: five tickets that summed
+    # to $2,396.64 with ORCL already open filled at $2,412.37 against $2,400.
+    # The ledger here holds the fills, earlier ones in this batch included.
+    held = ledger.collateral_held
+    total = round(held + collateral, 2)
+    if total > settings.max_total_collateral:
+        raise InsufficientFunds(
+            f"filled, this position takes portfolio collateral to ${total:,.2f}, over "
+            f"the ${settings.max_total_collateral:,.0f} limit: ${held:,.2f} is already "
+            f"held on {len(ledger.open_positions)} open position(s) and this fill needs "
+            f"${collateral:,.2f}. The ticket was checked at "
+            f"${spread.collateral * contracts:,.2f}; the fill came in at ${fill:.2f}, and "
+            f"a smaller credit means larger collateral.")
+    # Per contract, gross of fees -- the same figure `build_spreads` holds to
+    # the floor when it writes the ticket.
+    floor = settings.strategy().min_credit_per_trade
+    filled_credit = round(fill * 100, 2)
+    if filled_credit < floor:
+        raise BelowCreditFloor(
+            f"filled credit ${filled_credit:,.2f} a contract is under the ${floor:,.0f} "
+            f"per-trade floor. The ticket was sized at ${spread.credit_dollars:,.2f} on a "
+            f"${spread.credit:.2f} credit; the fill came in at ${fill:.2f}.")
 
     pos = Position(
         id=new_id(), symbol=spread.symbol, sector=sector, issuer=key,

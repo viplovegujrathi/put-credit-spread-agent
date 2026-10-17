@@ -54,7 +54,9 @@ Everything that can refuse is enforced in code, not in instructions:
    `Settings.opening_settle_minutes` (30) after the bell. Paper included.
 3. **Available balance** — `open_approved` raises `InsufficientFunds` when the
    *filled* collateral plus fees exceeds `Ledger.buying_power`, and again if the
-   filled collateral breaches the $1,000 per-trade cap.
+   filled collateral breaches the $1,000 per-trade cap or takes the book over
+   `max_total_collateral`. `BelowCreditFloor` when the filled credit is under
+   $100 a contract (53).
 4. **Portfolio caps** — `risk.check`, batch-aware via `pending`.
 5. **Earnings** — `pipeline.apply_earnings`; an unknown date blocks.
 
@@ -1888,3 +1890,53 @@ To tell a healthy box from a faulty one without the doctor: `systemctl show
 <unit> -p Result -p ExecMainStartTimestamp`, the run counts in
 `data/health.json`, and `HELD` lines under the latest `=== ... propose ===`
 header in `logs/propose.log`.
+
+---
+
+## 53. Two limits were checked on the ticket and broken at the fill
+
+2026-10-16, found by a health check of the box that night. The 14:16
+propose run opened five tickets (LEN, LULU, ADBE, C, DAL) with ORCL 133/130 already
+open. Both breaches were in the ledger:
+
+- **Portfolio collateral $2,412.37 against the $2,400 cap.** `risk.check`
+  summed the batch's TICKETS: $162.50 open + $2,234.14 sized = $2,396.64.
+  Every paper fill is worse than its ticket, and the five fills came to
+  $2,249.87, $15.73 more.
+- **DAL 75/70 filled at $0.9887, $98.87 a contract, under the $100 floor.**
+  `build_spreads` holds `credit_dollars` (the ticket credit, $100.32) to the
+  floor, never the fill. Its ticket already warned that the natural credit was
+  $88.
+
+**Fixed:** `open_approved` re-checks both at the fill, after the per-trade
+cap. The portfolio check is `ledger.collateral_held` plus this fill's
+collateral, so fills earlier in the same batch count; it raises
+`InsufficientFunds`. The floor is the fill credit x 100 per contract, gross of
+fees (the same figure the screen uses), against
+`settings.strategy().min_credit_per_trade`; it raises the new
+`BelowCreditFloor`. On 10-16 both would have held DAL and only DAL. A refusal
+leaves the ledger untouched and the ticket pending. `tests/test_fill_caps.py`
+pins it.
+
+- `cmd_approve` now catches every `OpenBlocked`. Its list had left out
+  `Concentrated`, which came out as a traceback.
+- Three tests in `tests/test_ledger_and_broker.py` opened without `sess=` and
+  so filled in the wall-clock session: they passed in market hours and failed
+  after it (stale, slippage 0.5). They now pass `live_session`.
+
+**Not fixed: the screen side.** For the per-trade cap the screen also rejects
+a ticket at the expected fill (50). For these two it does not, so a ticket
+within a few dollars of either limit is still proposed, auto-approved and held
+at the fill, every run, as TTWO was before 50.
+
+**Not a fault:** ORCL's mark of $1.85 on the 133/130 with spot $128.50 (under
+both strikes, 14 DTE) looks wrong, because the spread would settle at $3.00
+today. It is fair at a 65% IV: the long 130 put sits nearer the money and
+carries more time value than the short 133, so the pair is worth under its
+width until expiry.
+
+### Arming state, unchanged
+
+Read on the box on 2026-10-17 (Saturday 03:20 UTC), not written.
+`paper_trading`, `auto_approve` (paper only) and `auto_exit` are as 42 records
+them.

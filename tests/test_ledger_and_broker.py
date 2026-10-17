@@ -52,7 +52,8 @@ def test_paper_fill_is_never_better_than_the_sizing_basis(settings, live_session
 
 def test_open_updates_cash_collateral_and_buying_power(led, settings, live_session):
     sp = a_spread(settings, live_session)
-    pos = open_approved(led, sp, "Industrials", 1, settings, "P1", "human")
+    pos = open_approved(led, sp, "Industrials", 1, settings, "P1", "human",
+                        sess=live_session)
     assert led.cash == round(3000.0 + pos.credit_dollars, 2)
     assert led.collateral_held == pos.collateral
     # buying power nets off the full width at risk, not the credit-adjusted
@@ -63,7 +64,7 @@ def test_open_updates_cash_collateral_and_buying_power(led, settings, live_sessi
 
 def test_round_trip_realized_pl(led, settings, live_session):
     pos = open_approved(led, a_spread(settings, live_session), "Industrials", 1,
-                        settings, "P1", "human")
+                        settings, "P1", "human", sess=live_session)
     led.close_position(pos, debit=pos.credit_open * 0.45, reason="took profit")
     assert pos.realized_pl > 0
     assert led.collateral_held == 0
@@ -74,7 +75,7 @@ def test_round_trip_realized_pl(led, settings, live_session):
 def test_max_loss_is_capped_by_the_long_leg(led, settings, live_session):
     """The defining property of a credit spread: loss can never exceed collateral."""
     pos = open_approved(led, a_spread(settings, live_session), "Industrials", 1,
-                        settings, "P1", "human")
+                        settings, "P1", "human", sess=live_session)
     debit, _ = settle_expired(pos, spot=0.01)          # catastrophic gap down
     led.close_position(pos, debit, "expired", status=EXPIRED)
     assert pos.realized_pl >= -pos.collateral - pos.fees_paid

@@ -341,8 +341,9 @@ def _approve(args, settings: Settings, led) -> int:
         print(f"  {p.id} stays pending. Re-run this same command after "
               f"{sess.settle_until:%H:%M} ET.")
         return 1
-    except (paper_broker.InsufficientFunds, paper_broker.TradingDisabled,
-            paper_broker.CoolingOff) as exc:
+    except paper_broker.OpenBlocked as exc:
+        # Every refusal, not a list of them: `Concentrated` was missing from the
+        # list it replaced and came out as a traceback.
         print(f"\nHELD - {exc}")
         print(f"  {p.id} stays pending; the ledger is unchanged.")
         return 1
