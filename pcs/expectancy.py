@@ -48,6 +48,10 @@ SELECTION_CHANGES: tuple[tuple[str, str, str], ...] = (
      "the $2,400 portfolio cap and the $100 credit floor are checked at the "
      "paper fill as well as the ticket, so a fill that lands outside either is "
      "held instead of opened"),
+    ("2026-10-17", "4f48029",
+     "the screen holds the $100 floor at the expected paper fill and sizes the "
+     "$2,400 cap, the balance and each batch entry at it, so a ticket the fill "
+     "would refuse is not proposed"),
 )
 
 

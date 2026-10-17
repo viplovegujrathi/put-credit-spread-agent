@@ -1955,6 +1955,9 @@ proposed, auto-approved and held at the fill on every run, as TTWO was before
   cap. Another DAL strike pair might have qualified instead; the chain from
   that moment was not saved, so that is unknown.
 
+It has its own `SELECTION_CHANGES` row, `("2026-10-17", "4f48029", ...)`, after
+the fill-time one: it changes which tickets are proposed.
+
 The fill checks stay. They now catch a fill whose session is worse than the
 one the ticket was sized in, such as a manual approve once the quotes have gone
 stale (0.60 of the gap against 0.25 live). `tests/test_fill_caps.py` covers
