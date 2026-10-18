@@ -1,11 +1,32 @@
+import atexit
 import datetime as dt
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+# Before anything from `pcs` is imported: `config` fixes its paths at import.
+# A deploy runs this suite inside the live install, as the user the timers run
+# as, so every path a test can write must point away from it -- the data, the
+# logs and the dashboard, the web root nginx serves, and the login service's
+# state. 2026-10-17: a test that saved proposals replaced the box's tickets.
+# The web root and state folders are left nonexistent on purpose, which is how
+# `config` reads "nothing serves this" and "no login service".
+_RUNTIME = Path(tempfile.mkdtemp(prefix="pcs-tests-"))
+atexit.register(shutil.rmtree, _RUNTIME, ignore_errors=True)
+os.environ["PCS_RUNTIME"] = str(_RUNTIME)
+os.environ["PCS_WEB_ROOT"] = str(_RUNTIME / "no-web-root")
+os.environ["PCS_STATE_DIR"] = str(_RUNTIME / "no-state-dir")
+os.environ.pop("PCS_OVERRIDES", None)
+# The login service's signing key: rewriting it signs every viewer out.
+os.environ["PCS_SESSION_KEY"] = str(_RUNTIME / "session.key")
+os.environ["PCS_VIEWERS"] = str(_RUNTIME / "viewers")
 
 from pcs.chains import PutChain, PutQuote  # noqa: E402
 from pcs.config import Settings  # noqa: E402

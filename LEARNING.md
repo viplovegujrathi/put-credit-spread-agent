@@ -114,6 +114,12 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
   the same two-leg fee the optimizer charges to open. See 49.
 - Nothing is recorded as a measured vol unless it came off a live chain for
   that leg: `Spread.iv_measured`, `mark_iv`. A placeholder is not a reading.
+- The suite runs inside the live install on every deploy, so no test may reach
+  a live path. `tests/conftest.py` sets `PCS_RUNTIME`, `PCS_WEB_ROOT`,
+  `PCS_STATE_DIR`, `PCS_SESSION_KEY` and `PCS_VIEWERS` before `pcs` is
+  imported; a new path goes under `config.RUNTIME`, and
+  `tests/test_live_paths.py` fails on any that does not (54).
+- The doctor never offers a higher limit as the fix for reaching one (54).
 
 ### Commands
 
@@ -1974,3 +1980,70 @@ width until expiry.
 Read on the box on 2026-10-17 (Saturday 03:20 UTC), not written.
 `paper_trading`, `auto_approve` (paper only) and `auto_exit` are as 42 records
 them.
+
+---
+
+## 54. The deploy's own tests wrote over the box's proposals
+
+2026-10-17, found by the check after the 13d510f deploy. The box's
+`data/proposals.json` held one ticket, `P-TEST` on `TST`, approved, instead of
+the ten from 10-16. Nothing on the box makes that ticket; the test suite does.
+
+- `push.sh` and `bootstrap.sh` both run pytest inside `/opt/pcs` as `pcs`, the
+  user the timers run as. Every path in `config` was fixed to `ROOT`, the
+  checkout, so on the box ROOT *was* the live install. Two tests in
+  `test_config_overrides.py` call `run._auto_open`, which saves proposals to
+  `proposer.save`'s default path. Every deploy since 09-01 did this.
+- Only `proposals.json` was hit. The ledger, the journal (no TST outcome), the
+  settings and the served page (no TST) were checked and were intact. The next
+  propose run replaces the file; it was left for Monday's 14:15 UTC run, not
+  cleared by hand.
+- Other live paths were exposed the same way. `/var/www/pcs` and
+  `/var/lib/pcs` exist on the box, so `WEB_INDEX` was the served page for any
+  `render` a test did not monkeypatch, and `STATE_DIR` held the live
+  `overrides.json`. The dashboard tests read the live `watchlist.json` through
+  `watchlist.load()`, so they also depended on the box's data.
+  `authd.SECRET_FILE` is `/var/lib/pcs/session.key` unless `PCS_SESSION_KEY`
+  says otherwise, and a test that wrote it would sign every viewer out.
+
+**Fixed:** `config.RUNTIME` is `PCS_RUNTIME` or ROOT. `DATA_DIR`, `LOG_DIR`
+and `DASHBOARD_HTML` hang off it. `SP500_CSV` stays under ROOT because it is a
+tracked input. `tests/conftest.py` makes a temporary folder and sets
+`PCS_RUNTIME`, a nonexistent `PCS_WEB_ROOT` and `PCS_STATE_DIR` (which is how
+`config` reads "nothing serves this"), and `PCS_SESSION_KEY` and
+`PCS_VIEWERS`, all before `pcs` is imported, because several modules bind a
+path as a parameter default at def time. It also drops `PCS_OVERRIDES`.
+Production code reads no new variable unless it is set, so the box runs as
+before.
+
+`tests/test_live_paths.py` walks every `pcs` module and `run.py`, collects each
+module-level `Path` and each `Path` parameter default, and fails on any outside
+RUNTIME other than ROOT and `SP500_CSV`. It also checks that it found
+`proposer.save(path)`, so the walk cannot pass by seeing nothing.
+`test_deploy_excludes` now measures box state relative to RUNTIME. Locally, the
+checkout's `data/proposals.json` stopped changing once this was in.
+
+### The doctor's fix for a full book
+
+The position-count and collateral-cap BLOCKs used to offer `./run.py config
+--set max_...=N`. That is advice to loosen the cap that just did its job. On
+10-16 the book was over $2,400 only because the fill had not been held to the
+cap (53). Both now say the block clears as positions close or expire, and that
+the exits keep running. A limit is changed as a decision, not as the fix for
+reaching it. `test_a_full_book_is_never_fixed_by_raising_the_limit` pins it.
+
+### Verifying a deploy
+
+`push.sh` leaves no version marker on the box, and its test step prints only
+the last three lines. With `addopts = "-q"` plus its own `-q`, a passing run
+prints dots and no count, so the deploy output cannot show how many tests ran.
+To check what landed, compare `shasum` of each tracked file on the box with
+`git ls-files` on main, then run pytest on the box with `-q -o addopts=` to get
+the count. The first 13d510f deploy on 10-17 never reached the box: it was
+still at 7f180ff, and the last bootstrap was 10-14. The second, from the main
+checkout, landed: 73 tracked files matched and 569 tests passed.
+
+Box timers, in UTC (the box's clock) and ET: pcs-mark Mon-Fri 13:35 (09:35),
+pcs-propose 14:15 (10:15), pcs-watch hourly. `opened_at` stamps are UTC.
+
+Arming state unchanged: read on the box 2026-10-17, not written.

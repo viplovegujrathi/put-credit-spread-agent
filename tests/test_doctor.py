@@ -117,6 +117,17 @@ def test_the_collateral_cap_blocks(led, clear, open_market):
     assert "collateral cap" in _blocks(doctor.diagnose(led, clear, open_market))
 
 
+def test_a_full_book_is_never_fixed_by_raising_the_limit(led, clear, open_market):
+    """It used to offer `config --set max_total_collateral=N`: advice to loosen
+    the cap that had just held. See LEARNING 54."""
+    clear.max_open_positions, clear.max_total_collateral = 1, 400.0
+    led.positions = [_pos("a", collateral=500.0)]
+    checks = doctor.diagnose(led, clear, open_market)
+    for label in ("position count", "collateral cap"):
+        fix = next(c.fix for c in checks if c.label == label)
+        assert "--set" not in fix and "clears as positions close" in fix
+
+
 def test_an_exhausted_balance_blocks(led, clear, open_market):
     """The floor under every other cap: an account cannot commit more max loss
     than it has free cash to pay."""

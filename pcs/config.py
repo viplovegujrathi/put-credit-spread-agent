@@ -20,13 +20,18 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
-LOG_DIR = ROOT / "logs"
+# Everything the timers write lives under RUNTIME, which is the checkout unless
+# PCS_RUNTIME says otherwise. The tests set it to a temporary folder, because a
+# deploy runs them inside the live install: with every path fixed to ROOT, a
+# test that saved proposals saved them over the box's own (2026-10-17).
+RUNTIME = Path(os.environ.get("PCS_RUNTIME") or ROOT)
+DATA_DIR = RUNTIME / "data"
+LOG_DIR = RUNTIME / "logs"
 RH_CHAIN_DIR = DATA_DIR / "rh_chains"
-SP500_CSV = DATA_DIR / "sp500.csv"
+SP500_CSV = ROOT / "data" / "sp500.csv"     # tracked: an input that ships with the code
 LEDGER_JSON = DATA_DIR / "ledger.json"
 PROPOSALS_JSON = DATA_DIR / "proposals.json"
-DASHBOARD_HTML = ROOT / "dashboard.html"
+DASHBOARD_HTML = RUNTIME / "dashboard.html"
 
 # Where a web server serves the page from, if one does. `render()` writes
 # DASHBOARD_HTML next to the code and then publishes a copy here. Without that

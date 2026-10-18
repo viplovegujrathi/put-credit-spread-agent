@@ -64,6 +64,14 @@ def _svc(unit: str) -> tuple[str, str]:
     return kv.get("Result", ""), kv.get("ExecMainStartTimestamp", "")
 
 
+# The fix offered for a full book. It used to be `config --set` with a higher
+# limit, which is advice to loosen the cap that just did its job -- and on
+# 2026-10-16 the book was over $2,400 only because the fill had not been held
+# to it. A limit is changed as a decision, not as the remedy for reaching it.
+CLEARS_ON_CLOSE = ("clears as positions close or expire -- nothing new opens until "
+                   "then, and the exits keep running")
+
+
 def _last_propose() -> tuple[list[dict], str]:
     if not PROPOSALS_JSON.exists():
         return [], ""
@@ -150,14 +158,14 @@ def diagnose(led: Ledger, settings: Settings, sess: SessionState,
     n, cap = len(led.open_positions), settings.max_open_positions
     if n >= cap:
         A(Check(BLOCK, "position count", f"{n} of {cap} open -- the book is full",
-                "./run.py config --set max_open_positions=N, or close something"))
+                CLEARS_ON_CLOSE))
     else:
         A(Check(OK, "position count", f"{n} of {cap} open, room for {cap - n} more"))
 
     used, tot = led.collateral_held, settings.max_total_collateral
     if used >= tot:
         A(Check(BLOCK, "collateral cap", f"${used:,.0f} of ${tot:,.0f} deployed",
-                "./run.py config --set max_total_collateral=N"))
+                CLEARS_ON_CLOSE))
     elif tot - used < 200:
         A(Check(WARN, "collateral cap", f"${tot - used:,.0f} of headroom left -- "
                 f"below the collateral of most $5-wide spreads"))

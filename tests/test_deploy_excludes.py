@@ -16,7 +16,7 @@ import re
 import pytest
 
 from pcs import health, learning, marketdata, watchlist
-from pcs.config import DATA_DIR, LEDGER_JSON, PROPOSALS_JSON, ROOT
+from pcs.config import DATA_DIR, LEDGER_JSON, PROPOSALS_JSON, ROOT, RUNTIME
 
 EXCLUDE = re.compile(r"--exclude '([^']+)'")
 
@@ -46,7 +46,7 @@ def test_both_deploy_paths_spare_the_same_files():
 
 @pytest.mark.parametrize("path", STATE, ids=lambda p: p.name)
 def test_box_state_is_spared_by_both_rsyncs(path):
-    rel = path.relative_to(ROOT).as_posix()
+    rel = path.relative_to(RUNTIME).as_posix()     # the install folder, on the box
     assert covered(rel, excludes("push.sh")), f"push.sh would overwrite {rel}"
     assert covered(rel, excludes("bootstrap.sh")), f"bootstrap.sh would overwrite {rel}"
 
