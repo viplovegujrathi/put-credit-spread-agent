@@ -40,10 +40,10 @@ AFTER = f"{dt.date.fromisoformat(CHANGE) + dt.timedelta(days=1)}T14:16:00"
 
 
 # --- which trades count ----------------------------------------------------------
-def test_the_latest_change_is_the_screen_side_of_the_fill_caps():
+def test_the_latest_change_is_the_farther_strike():
     day, commit, what = expectancy.SELECTION_CHANGES[-1]
-    assert (day, commit) == ("2026-10-17", "4f48029")
-    assert "expected paper fill" in what
+    assert (day, commit) == ("2026-10-19", "d488761")
+    assert "5% below spot" in what and "chance of profit" in what
 
 
 def test_changes_are_listed_oldest_first():

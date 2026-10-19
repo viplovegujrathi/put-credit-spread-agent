@@ -2102,6 +2102,10 @@ that would have blocked ORCL (120/110 at about $860 against $452 free), not
 substituted 125/120. Not changed; whether to fall back to the next spread that
 fits is a separate decision.
 
+`expectancy.SELECTION_CHANGES` has the row `("2026-10-19", "d488761", ...)`,
+dated Monday, the first propose run on the new code, so the five 10-16
+positions and ORCL stay out of the History tab's since-the-change record.
+
 Not a guarantee of a better record: it moves each trade to a lower chance of
 loss and a smaller credit, and the stops (2x credit, or half the max loss) still
 apply. The History tab measures the record since this row (51).

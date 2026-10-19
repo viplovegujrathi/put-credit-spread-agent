@@ -52,6 +52,9 @@ SELECTION_CHANGES: tuple[tuple[str, str, str], ...] = (
      "the screen holds the $100 floor at the expected paper fill and sizes the "
      "$2,400 cap, the balance and each batch entry at it, so a ticket the fill "
      "would refuse is not proposed"),
+    ("2026-10-19", "d488761",
+     "the short strike sits at least 5% below spot with a short delta of 0.30 or "
+     "less, and spreads are ranked by chance of profit before return"),
 )
 
 
