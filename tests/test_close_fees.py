@@ -35,7 +35,9 @@ def fees_on(settings):
 
 
 def _open(led, settings, sess, contracts=2):
-    sp = build_spreads(make_chain(spot=100.0), 100.0, settings, sess)[0][0]
+    # The narrowest, whatever ranks first: two lots of a wide one breach the cap.
+    sp = min(build_spreads(make_chain(spot=100.0), 100.0, settings, sess)[0],
+             key=lambda s: s.collateral)
     return open_approved(led, sp, "Energy", contracts, settings, "P1", "human", sess=sess)
 
 

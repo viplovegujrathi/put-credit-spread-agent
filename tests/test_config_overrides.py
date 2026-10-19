@@ -63,7 +63,7 @@ def test_an_untouched_account_runs_the_skills_numbers(settings):
     ("max_collateral_per_trade", 750.0),
     ("min_credit_per_trade", 150.0),
     ("max_credit_per_trade", 600.0),
-    ("min_otm_cushion", 0.05),
+    ("min_otm_cushion", 0.07),
     ("take_profit_pct", 0.40),
 ])
 def test_each_override_reaches_the_resolved_strategy_and_is_reported(settings, field, value):

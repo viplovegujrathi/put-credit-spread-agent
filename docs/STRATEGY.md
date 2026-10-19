@@ -32,9 +32,9 @@ This agent trades exactly one structure: the **bull put credit spread**.
 - **Minimum credit per trade ≥ $100** (at 100-share/1-contract size).
 - **No upper cap on credit/profit.** If a name's real option chain offers $250, $400, or more in credit while still keeping collateral ≤ $1,000, take the higher credit — more premium for the same capped risk is strictly better. Do not throttle back to "under $300" for its own sake.
 - **Do not force the collateral toward $1,000 by default.** Size the width to what the stock's actual premium supports:
-  - If a $5-wide spread at a sensible OTM strike (3-8% out) already clears $100 in credit, use it — that's more capital-efficient (e.g., MCD/LHX/UNH/BA/GOOGL in the worked examples below cleared $100+ credit on only ~$380-400 of collateral).
+  - If a $5-wide spread at a sensible OTM strike (5-8% out) already clears $100 in credit, use it — that's more capital-efficient (e.g., MCD/LHX/UNH/BA/GOOGL in the worked examples below cleared $100+ credit on only ~$380-400 of collateral).
   - Only widen the spread (up to the $1,000 ceiling) when the stock's premium genuinely requires it to reach the $100 floor (e.g., WYNN needed a $9-wide spread; NKE and LVS needed either a tighter, riskier strike or a $10-wide spread to clear $100).
-  - If no combination of width and a reasonable OTM strike (≥3% out) clears $100 in credit and stays ≤ $1,000 collateral, **skip the name** rather than moving the short strike to the money just to hit the target.
+  - If no combination of width and a reasonable OTM strike (≥5% out, short delta ≤ 0.30) clears $100 in credit and stays ≤ $1,000 collateral, **skip the name** rather than moving the short strike to the money just to hit the target.
 
 ### 1.5 Expiration
 - Target **~30-35 days to expiration**, landing on a standard Friday expiration.
@@ -106,8 +106,8 @@ These were modeled from each stock's implied volatility, not live quotes — the
 │ 5. Spread Optimizer   │  For each candidate: searches short/long strike
 │                       │  combinations for the narrowest width that clears
 │                       │  credit ≥ $100 while collateral ≤ $1,000, subject to
-│                       │  a minimum OTM cushion (e.g., ≥3%) and liquidity
-│                       │  filters on both legs. Ranks by credit ÷ collateral.
+│                       │  a minimum OTM cushion (≥5%), a short-delta ceiling (0.30) and liquidity
+│                       │  filters on both legs. Ranks by chance of profit, then credit ÷ collateral.
 └──────────┬───────────┘
            ▼
 ┌─────────────────────┐

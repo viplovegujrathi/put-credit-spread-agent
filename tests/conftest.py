@@ -58,7 +58,7 @@ def make_chain(symbol="TST", expiration=None, spot=100.0, strikes=None,
     if price_at is None:
         def price_at(k):
             otm = max(spot - k, 0.0)
-            return round(max(0.05, 3.0 * 2.718 ** (-otm / 6.0)), 2)
+            return round(max(0.05, 4.5 * 2.718 ** (-otm / 6.0)), 2)
     puts = []
     for k in strikes:
         m = price_at(k)

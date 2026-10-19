@@ -38,7 +38,7 @@ and covered by tests:
 | Structure | **bull put credit spread only** |
 | Collateral (max loss) per trade | **≤ $1,000** |
 | Credit per trade | **≥ $100**, **no upper cap** |
-| Short strike | **≥ 3% OTM** — never pulled to the money to hit the number |
+| Short strike | **≥ 5% OTM, short delta ≤ 0.30** — never pulled to the money to hit the number |
 | Expiration | **~32 DTE**, a real listed Friday confirmed against the chain |
 | Earnings inside the window | **excluded** |
 | Opening range | **no position opened in the first 30 min** after the bell — paper included |
@@ -219,7 +219,7 @@ number beside it:
 | `max_loss_per_trade` | — | The same cap said the other way; the tighter one binds |
 | `min_credit_per_trade` | strategy's $100 | Credit floor |
 | `max_credit_per_trade` | no cap | A ceiling, if you want one |
-| `min_otm_cushion` | strategy's 3% | How far OTM the short strike must sit |
+| `min_otm_cushion` | strategy's 5% | How far OTM the short strike must sit |
 | `take_profit_pct` | strategy's 50% | Where profit is booked |
 | `stop_loss_credit_multiple` | `2.0×` | |
 | `stop_loss_pct_of_max_loss` | `50%` | |

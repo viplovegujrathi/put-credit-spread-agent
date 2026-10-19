@@ -159,7 +159,10 @@ class Strategy:
     max_collateral_per_trade: float = 1000.0   # (width * 100) - (credit * 100)
     min_credit_per_trade: float = 100.0        # credit * 100
     max_credit_per_trade: float | None = None  # no upper cap, by design
-    min_otm_cushion: float = 0.03              # short strike >= 3% below spot
+    # 2026-10-18: raised from 3% and a delta ceiling added. Ranked by credit over
+    # collateral, every position the agent ever took sat 3-6% out (LEARNING 55).
+    min_otm_cushion: float = 0.05              # short strike >= 5% below spot
+    max_short_delta: float = 0.30              # |delta| of the short put, a ceiling
     max_otm_cushion: float = 0.20              # don't chase strikes into the noise
     candidate_widths: tuple[float, ...] = (1.0, 2.5, 5.0, 10.0)  # filtered to
                                                # strikes that actually exist
@@ -501,6 +504,8 @@ def _validate() -> None:
     assert s.min_pct_off_52w_high >= 0.15, "screen must stay at >=15% off the high"
     assert s.max_collateral_per_trade <= 1000.0, "per-trade collateral cap is $1,000"
     assert s.min_credit_per_trade >= 100.0, "per-trade credit floor is $100"
+    assert s.min_otm_cushion >= 0.05, "the short strike sits >=5% below spot"
+    assert 0.0 < s.max_short_delta <= 0.30, "the short put's delta is capped at 0.30"
     assert s.max_credit_per_trade is None, "credit has no upper cap, by design"
     assert s.primary_band[0] < s.primary_band[1] <= 0.0
     # The trigger has to sit inside the band it is described by. The band is

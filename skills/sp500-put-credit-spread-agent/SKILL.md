@@ -93,10 +93,10 @@ Sell a put a few percent OTM; buy a lower strike, same expiration.
 - **Collateral = (width × 100) − (credit × 100) ≤ $1,000.**
 - **Credit × 100 ≥ $100.** **No upper cap** — if the chain supports $250 or
   $400 within the collateral limit, keep it. Do not throttle back.
-- **Default to the narrowest width** that clears $100 at ≥3% OTM. A $5-wide
+- **Default to the narrowest width** that clears $100 at ≥5% OTM and a short delta of 0.30 or less. A $5-wide
   clearing $110 on ~$400 beats a $10-wide using $900 for the same $110. Only
   widen when the premium genuinely requires it.
-- If no width/strike combination at ≥3% OTM clears $100 within $1,000
+- If no width/strike combination at ≥5% OTM and ≤0.30 delta clears $100 within $1,000
   collateral, **skip the name** — never move the short strike to the money to
   hit the number.
 

@@ -120,6 +120,10 @@ Exits are deliberately **not** gated: closing only ever reduces risk. See §13.
   imported; a new path goes under `config.RUNTIME`, and
   `tests/test_live_paths.py` fails on any that does not (54).
 - The doctor never offers a higher limit as the fix for reaching one (54).
+- The short strike sits at least 5% below spot with a delta of 0.30 or less, and
+  spreads are ranked by chance of profit before return (`optimizer.rank_key`,
+  used for the pick within a name and across names). `max_short_delta` is
+  deliberately not an overridable setting (55).
 
 ### Commands
 
@@ -2047,3 +2051,57 @@ Box timers, in UTC (the box's clock) and ET: pcs-mark Mon-Fri 13:35 (09:35),
 pcs-propose 14:15 (10:15), pcs-watch hourly. `opened_at` stamps are UTC.
 
 Arming state unchanged: read on the box 2026-10-17, not written.
+
+
+---
+
+## 55. Ranked by return, the agent always took the strike nearest spot
+
+2026-10-18, from the question "why ORCL 133/130 and not 120/115?" Both facts
+below are from the box's ledger (30 positions to 10-17) and from Robinhood's
+hourly option bars for 2026-09-30 10:00-11:00 ET (last trades, not bid/ask).
+
+- **The ranking** was credit over collateral, which only grows as the short
+  strike nears the money, with a 3% floor on distance. The nearest allowed
+  strike therefore won every time: all 30 positions opened 3.1-5.9% below
+  spot (median 4.0%) at a short delta of 0.27-0.38. ORCL 133/130 was 3.1% out
+  at 0.38, on a $162.50 collateral and an 85% return.
+- **120/115 was never eligible.** It paid about $0.83-0.91 on 9-30, under the
+  $100 floor. 125/120 paid about $1.23 at 8.9% out and 0.25 delta. 120/110 paid
+  about $1.36 but takes about $860 of collateral, and only $452 of the
+  $2,400 cap was free that morning.
+- **Record to date:** 24 closed, 16 wins averaging +$125 and 8 stops averaging
+  -$262, net -$91.80. Nothing in it compares near and far strikes, because
+  none was ever taken, so the learner cannot find this by itself.
+
+**Changed (the user chose all three, with 5% / 0.30 / chance of profit):**
+
+- `Strategy.min_otm_cushion` 0.03 -> 0.05, still overridable per account (the
+  box's `settings.json` holds null, so the baseline applies after a deploy).
+- `Strategy.max_short_delta = 0.30`, new, asserted at import to stay at or under
+  0.30. `build_spreads` rejects a short put above it ("short delta 0.38 > the
+  0.30 ceiling"), and one with no delta to check ("no delta to check against
+  the ceiling"). The second is a behaviour change: a chain that quotes no vol on
+  either leg used to size (with no delta recorded, 47) and is now not taken.
+- `optimizer.rank_key`: chance of profit (rounded to 0.01), then return, then
+  cushion, then width. Used inside a name and in `build_proposals` across
+  names. Return still picks the narrowest width at equal odds, since one short
+  strike has one chance of profit.
+- Tests: the default synthetic chain now pays 4.5 x e^(-otm/6) rather than
+  3.0 x, so a $5-wide spread 5% out clears $100; `test_close_fees` opens the
+  narrowest spread rather than the top-ranked one, because two lots of a wide
+  one breach the per-trade cap; the recorded-vol tests borrow a long-leg vol
+  instead of feeding a chain with none.
+
+**Cost, and one thing to watch.** Farther strikes pay less, so to reach $100
+they are wider and use more of the $2,400 cap, which means fewer positions and
+more names skipped. `build_proposals` takes only the top-ranked spread of each
+name, so a name whose best-odds spread is too wide for the room left is
+blocked by the portfolio cap rather than offered its next-best spread. On 9-30
+that would have blocked ORCL (120/110 at about $860 against $452 free), not
+substituted 125/120. Not changed; whether to fall back to the next spread that
+fits is a separate decision.
+
+Not a guarantee of a better record: it moves each trade to a lower chance of
+loss and a smaller credit, and the stops (2x credit, or half the max loss) still
+apply. The History tab measures the record since this row (51).

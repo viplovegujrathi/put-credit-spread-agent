@@ -31,10 +31,10 @@ def test_ranking_prefers_capital_efficiency_over_width(settings, live_session):
     chain = make_chain(spot=100.0)
     spreads, _ = build_spreads(chain, 100.0, settings, live_session)
     best = spreads[0]
-    same_credit_wider = [s for s in spreads
-                         if s.credit_dollars >= best.credit_dollars and s.width > best.width]
-    assert all(s.roc <= best.roc for s in same_credit_wider)
-    assert best.roc == max(s.roc for s in spreads)
+    # Among spreads on one short strike -- the same odds -- return picks the narrowest.
+    same_strike = [s for s in spreads if s.short_strike == best.short_strike]
+    assert all(s.roc <= best.roc for s in same_strike)
+    assert all(s.width >= best.width for s in same_strike if s.roc == best.roc)
 
 
 def test_strike_is_never_pulled_to_the_money(settings, live_session):

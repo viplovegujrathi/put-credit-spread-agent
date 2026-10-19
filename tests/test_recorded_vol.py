@@ -33,32 +33,36 @@ def _fill(led, sp, settings, sess):
     return open_approved(led, sp, "Energy", 1, settings, "P1", "human", sess=sess)
 
 
-def test_no_quoted_vol_means_no_delta_and_no_pop(settings, live_session):
-    sps, _ = build_spreads(make_chain(iv=0.0), 100.0, settings, live_session)
-    assert sps, "the chain must still size -- IV is not a sizing input"
-    for sp in sps:
-        assert sp.iv == 0.0 and not sp.iv_measured
-        assert sp.short_delta is None
-        assert sp.pop_est is None and sp.pop_source == "unavailable"
+def _borrowed(settings, live_session):
+    """A chain whose short strikes quote no vol but whose lower strikes do: the
+    delta is estimated off the long leg's. Returns the first spread on 95."""
+    chain = make_chain(iv=0.0)
+    for q in chain.puts:
+        if q.strike < 95:
+            q.iv = 0.35
+    sps, _ = build_spreads(chain, 100.0, settings, live_session)
+    return next(s for s in sps if s.short_strike == 95)
+
+
+def test_no_quoted_vol_means_no_spread_rather_than_a_placeholder(settings, live_session):
+    """The delta ceiling needs a delta. With no vol on either leg there is none,
+    and the spread is not taken -- it is not given a constant to pass on."""
+    sps, rejects = build_spreads(make_chain(iv=0.0), 100.0, settings, live_session)
+    assert sps == []
+    assert any("no delta to check" in r for r in rejects)
 
 
 def test_the_placeholder_never_reaches_the_position(settings, led, live_session):
-    sp = build_spreads(make_chain(iv=0.0), 100.0, settings, live_session)[0][0]
-    pos = _fill(led, sp, settings, live_session)
+    pos = _fill(led, _borrowed(settings, live_session), settings, live_session)
     assert pos.iv_at_open is None
-    assert pos.short_delta_at_open is None
 
 
 def test_the_long_legs_vol_is_not_recorded_as_the_short_legs(settings, led, live_session):
     """Borrowing the long leg's IV to estimate a delta is a fair approximation.
     Writing it down as the short leg's vol at entry is not -- it is another
     strike, and `iv_change` would compare the short leg at the mark against it."""
-    chain = make_chain(iv=0.0)
-    first = build_spreads(chain, 100.0, settings, live_session)[0][0]
-    chain.at(first.long_strike).iv = 0.41
-    sp = next(s for s in build_spreads(chain, 100.0, settings, live_session)[0]
-              if (s.short_strike, s.long_strike) == (first.short_strike, first.long_strike))
-    assert sp.iv == 0.41 and not sp.iv_measured
+    sp = _borrowed(settings, live_session)
+    assert sp.iv == 0.35 and not sp.iv_measured
     assert sp.short_delta is not None          # still usable for the estimate
 
     assert _fill(led, sp, settings, live_session).iv_at_open is None
@@ -82,7 +86,10 @@ def test_a_ticket_written_before_the_flag_records_nothing(settings, led, live_se
 
 
 def test_the_ticket_says_unquoted_rather_than_zero(settings, live_session):
-    sp = build_spreads(make_chain(iv=0.0), 100.0, settings, live_session)[0][0]
+    from dataclasses import replace
+    sp = replace(build_spreads(make_chain(iv=0.37), 100.0, settings, live_session)[0][0],
+                 iv=0.0, iv_measured=False, short_delta=None, pop_est=None,
+                 pop_source="unavailable")
     p = Proposal(id="P1", created_at="", symbol="TST", name="TST Inc", sector="Energy",
                  bucket="primary", spread=sp.as_dict(), contracts=1, rationale="",
                  risk_ok=True)

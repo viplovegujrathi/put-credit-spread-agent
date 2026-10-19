@@ -165,7 +165,7 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
             skipped.append(f"{c.symbol}: no width/strike combination qualified - {why}")
             continue
         ranked.append((sc.spreads[0], c))
-    ranked.sort(key=lambda t: -t[0].roc)
+    ranked.sort(key=lambda t: optimizer.rank_key(t[0]))
 
     pv = risk.PortfolioView(
         open_collateral=ledger.collateral_held, open_count=len(ledger.open_positions),

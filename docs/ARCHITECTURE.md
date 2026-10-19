@@ -31,9 +31,10 @@ can replace the screen without touching anything downstream.
              ▼
 ┌─ 5. Optimizer ───────────┐  pcs/optimizer.py
 │  search every (short,    │  credit ≥ $100 · collateral ≤ $1,000 ·
-│  long) pair; rank by     │  cushion ≥ 3% · natural credit ≥ 75% of the floor ·
+│  long) pair; rank by     │  cushion ≥ 5% · short delta ≤ 0.30 ·
+│  chance of profit, then  │  natural credit ≥ 75% of the floor ·
 │  credit ÷ collateral     │  tradeable package market.
-└────────────┬─────────────┘  Ranking by ROC IS the narrowest-width rule.
+└────────────┬─────────────┘  ROC breaks ties: the narrowest width at equal odds.
              ▼
      earnings check          Only for names that produced a spread, against
              │               THAT symbol's expiration. Unknown ⇒ blocked.

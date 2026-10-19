@@ -177,7 +177,8 @@ def build_spreads(chain: PutChain, spot: float, settings: Settings,
     lo = spot * (1 - strategy.max_otm_cushion)
     shorts = [k for k in strikes if lo <= k <= hi]
     if not shorts:
-        reject(f"no listed strike between {lo:.2f} and {hi:.2f} (3-20% OTM)")
+        reject(f"no listed strike between {lo:.2f} and {hi:.2f} "
+               f"({strategy.min_otm_cushion:.0%}-{strategy.max_otm_cushion:.0%} OTM)")
         return [], rejects
 
     dte = chain.dte
@@ -262,6 +263,15 @@ def build_spreads(chain: PutChain, spot: float, settings: Settings,
             iv = sq.iv or lq.iv
             delta = sq.delta if sq.delta is not None else (
                 put_delta(spot, sk, iv, dte) if iv > 0 else None)
+            # A ceiling on the short put's delta, checked on the same reading the
+            # ticket records. No delta means nothing to check it against, so the
+            # spread is not taken rather than assumed to pass.
+            if delta is None:
+                reject("short leg: no delta to check against the ceiling")
+                continue
+            if abs(delta) > strategy.max_short_delta:
+                reject(f"short delta {abs(delta):.2f} > the {strategy.max_short_delta:.2f} ceiling")
+                continue
             if sq.pop_short is not None:
                 pop, pop_src = round(float(sq.pop_short), 4), "broker"
             elif delta is not None:
@@ -294,10 +304,17 @@ def build_spreads(chain: PutChain, spot: float, settings: Settings,
             sp.efficiency = _efficiency(sp)
             out.append(sp)
 
-    # Return on collateral does the "narrowest width that clears $100" work by
-    # construction; cushion breaks near-ties toward the safer strike.
-    out.sort(key=lambda s: (-round(s.roc, 3), -s.cushion, s.width))
+    out.sort(key=rank_key)
     return out, rejects
+
+
+def rank_key(s: Spread) -> tuple:
+    """Best first: the chance the spread expires worthless, then return on
+    collateral. Ranked by return alone it always chose the strike nearest spot,
+    since credit over collateral only grows as the short strike nears the money
+    (LEARNING 55). Return still does the "narrowest width that clears $100" work
+    among spreads of equal odds, and cushion breaks the remaining ties."""
+    return (-round(s.pop_est or 0.0, 2), -round(s.roc, 3), -s.cushion, s.width)
 
 
 def best_per_symbol(spreads: list[Spread], keep: int = 3) -> list[Spread]:
