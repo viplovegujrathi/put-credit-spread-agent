@@ -28,6 +28,7 @@ module. Update it in the same commit as the code it describes.
 | `pcs/doctor.py` | every gate that stops a fill, in binding order — the "why has nothing opened?" answer | anything that mutates; it is read-only by construction |
 | `pcs/learning.py` | the journal: closed-trade outcomes, operational faults, symbol quarantines | anything that opens or closes; it never writes `Settings` |
 | `pcs/paper_broker.py` | the three open gates, simulated fills, marking, exit **execution** | exit policy |
+| `pcs/shadow.py` | what each early exit would have booked held to expiration (research columns `shadow_*`) | anything a decision reads; nothing in the exit path may depend on it |
 | `pcs/ledger.py` | cash, positions, append-only events, all account arithmetic | any policy |
 | `pcs/pipeline.py` | wiring: screen → shortlist → size → earnings → propose | new rules |
 | `pcs/proposer.py` / `pcs/dashboard.py` | proposal records + tickets; the HTML view | logic of any kind |
@@ -2109,3 +2110,163 @@ positions and ORCL stay out of the History tab's since-the-change record.
 Not a guarantee of a better record: it moves each trade to a lower chance of
 loss and a smaller credit, and the stops (2x credit, or half the max loss) still
 apply. The History tab measures the record since this row (51).
+
+---
+
+## 56. What the eight losses have in common, and what they cannot say
+
+2026-10-15, after the AVGO stop and the HD take-profit. Read from a copy of the
+box's ledger (`ssh pcs 'sudo -n -u pcs cat /opt/pcs/data/ledger.json'`), not
+from `./run.py learn`: `learn` runs self-repair and writes the journal, so it is
+not a read-only look. Nothing was written on the box.
+
+**The record, closed trades only.** 23 closed, 15 wins and 8 losses, realised
+-$182.55 (gross wins +$1,916.32, gross losses -$2,098.87). Two positions open:
+ORCL 133/130 at 1.19x credit, HD 280/270 at 0.53x. Every win was a take-profit
+and every loss a stop; nothing has expired and nothing has run to max loss.
+
+- **Payoff.** An average win is $127.75 (0.544x credit), an average loss
+  -$262.36 (1.171x credit): one loss costs 2.1 wins. Break-even is 68.3%, the
+  record is 65.2%, Wilson 95% 45-81%. The shortfall is under one trade and the
+  range covers both profit and loss.
+- **The stops do what the rule says.** The six stops other than GOOGL bought
+  back at 2.01x-2.33x credit, a mean overshoot of 0.14x, which is the 15-minute mark
+  cadence. A loss runs 1.0x-1.3x credit. GOOGL (2.80x) is the pre-guard
+  plumbing failure in 38 and is not a stop-rule result.
+- **Few trades carry the loss dollars.** APP alone is 32% (-$666.43, the only
+  15-wide trade), and APP + STX + RDDT are 58%. Width 10 nets +$726 and width 15
+  -$666, so 10+ wide nets +$60. Width 5: 6 of 11, -$346.
+- **Losses arrive together.** STX, BA and CLX all stopped on 2026-09-16, three
+  sectors, -$611 = 29% of loss dollars, with 6 positions open. The sector and
+  per-name caps cannot see a market-wide move. The index was NOT checked for
+  that day, so "market-wide" is an inference. 4 of 8 losses ended within 3 days
+  of the fill (GOOGL 1d, STX 1d, APP 3d, AVGO 3d).
+- **3 of 8 never touched the short strike** at exit (GOOGL, RDDT, STX), the
+  same pattern 47 found. AVGO is the third `mark_iv` reading for 47's vega
+  hypothesis and the first with IV UP (+12%), strike breached by 2.5%. The
+  other two (RDDT, APP) had vol falling. Three readings, mixed, no conclusion.
+- **Re-entries after a loss:** GOOGL reopened 7 days later and won; RDDT
+  reopened 6 days later (cooldown 5) and lost again. n = 2.
+
+**Splits on the 16 trades that carry entry features** (the first 7 predate the
+fields). None is significant; about ten cuts were looked at, so one or two
+would look interesting by chance. Treat as hypotheses to watch, not findings:
+
+| split | in | out | Fisher p |
+|---|---|---|---|
+| pullback under 5.5% below the 50dma | 7/9, +$461 | 3/7, -$917 | 0.30 |
+| IV at open 50%+ | 2/5, -$857 | 8/11, +$400 | 0.30 |
+| short delta above .30 | 7/13, -$727 | 3/3, +$271 | 0.25 |
+| 30%+ off the 52w high | 4/7 | 6/9 | 1.00 |
+
+Whole record: Communication Services 3 of 7, -$900 (p = 0.18; GOOGL, RDDT x2
+and APP are 61% of loss dollars); Information Technology 7 of 9, +$423.
+
+**The 5.5% pullback cut failed its first out-of-sample test.** 50 read it as 7
+of 8 against 2 of 6. The two trades since went the other way (AVGO, 3.75%
+pullback, lost; HD, 7.55%, won), so it is 7 of 9 against 3 of 7. The 5.5% cut
+was chosen after seeing the data and was never a rule. No parameter changes on
+this evidence.
+
+**What the record could not answer when this was written.** Wins are cut at
+about 50-60% of credit and losses at 2x, and no stopped spread was followed to
+expiry, so there was no way to tell whether the stops saved money or locked in
+losses that would have recovered. Section 57 answers it from the expiration-day
+closes. The only per-trade limit today is the $1,000 collateral cap; a width or
+max-loss cap is the next lever if APP-sized losses matter.
+
+### Gotchas from the analysis
+
+- `pct_off_high_at_open` and `pct_from_dma50_at_open` are stored as FRACTIONS
+  (0.0755 = 7.55%), and only on trades opened from about 2026-09-08. Comparing
+  them against 5.5 instead of .055 silently puts every trade in one bucket.
+- `./run.py learn` is not a read-only look at the record. Copy the ledger with
+  the command above and analyse the copy.
+- Scheduled tasks record the creating session's folder as their cwd, and
+  `change_directory` is refused in a worktree session. A task made from a pcs
+  worktree runs in pcs. The DITM snapshot refresh has to be created from a plain
+  session in `~/ditm-robinhood-agent`; until it is, `ditm-cycle.service` fails
+  each weekday on the 2026-09-16 snapshot.
+
+### Arming state, unchanged
+
+Settings were read on the box on 2026-10-13, not written. `paper_trading`,
+`auto_approve` (paper only), `auto_exit` and `mode` are as 42 records them. The
+ledger is paper; live mode places no order in code.
+
+
+---
+
+## 57. Early exits against holding to expiration
+
+`pcs/shadow.py`, 2026-10-18. Every exit is a bet that closing early beats
+waiting, and the record could not price either bet (56). A closed position whose
+expiration has passed now gets the underlying's **expiration-day close**,
+settled with `paper_broker.settle_expired` -- the function a real expiry uses --
+so "held" is exactly what an expired row would have booked. No option quote and
+no running mark: settlement needs the spot and nothing else, which is also why
+the 18 trades already closed could be back-filled the same day.
+
+- Fields on `Position`: `shadow_settle_spot`, `shadow_pl`, `shadow_tried_on`.
+  None means NOT SETTLED YET, never "held at no loss". Nothing in the exit path,
+  the caps or the cash arithmetic reads them. They live on the ledger row on
+  purpose: a separate `data/shadow.json` would be deleted by the `--delete`
+  rsync unless it were added to the excludes, and the ledger is already
+  protected.
+- `mark` runs it after the exits for that run, six positions at most per run
+  (the first run has everything to back-fill and holds the ledger lock), and a
+  failure inside it is printed and swallowed -- `mark` is the job that takes
+  stops. A failed fetch is retried once per calendar day, not once per mark.
+- `./run.py shadow` prints the comparison; `--resolve` fetches what is due. The
+  same table prints under `learn`.
+- A close is settled only when its expiration is strictly in the past (the bar
+  for that session is not final until it ends), and only on one clean bar for
+  that exact date. A bar for another day, a NaN or an empty frame leaves the row
+  unsettled.
+
+### The first reading (18 early closes whose expiration had passed)
+
+Run on a copy of the box's ledger from 2026-10-15 with real fetches, nothing
+written on the box. The three biggest settle prices (AKAM 87.81, STX 639.01,
+GLW 132.00) were checked against the daily history: continuous, no split, the
+low of the window in each case.
+
+| exit | n | actual | held to expiry | held minus actual | holding better |
+|---|---|---|---|---|---|
+| take_profit | 12 | +$1,631 | +$1,492 | -$139 | 10 of 12 |
+| stop_loss | 6 | -$1,232 | -$803 | +$429 | 4 of 6 |
+| all | 18 | +$400 | +$689 | +$290 | |
+
+- **Take-profits** gave up money in 10 of 12 trades and still came out $139
+  ahead, because two of them (GLW +$99, AKAM +$171) were closed before spreads
+  that went on to max loss: -$306 and -$670 held.
+- **Stops** cost $429 over the six: GOOGL (-$209 against +$116 held), RDDT
+  (-$255 against +$9), RDDT again (-$156 against +$155) and CLX (-$170 against
+  -$133) would each have been better held. BA (-$137 against -$370) and STX
+  (-$304 against -$580) were saved.
+- Holding everything would have booked +$290 more across 18 trades, and the
+  held book contains four max losses (BA, GLW, STX, AKAM = -$1,926). The exits
+  cap the tail at the price of the average. On this sample that price is about
+  $16 a trade, well inside the noise of 18 trades; it is not evidence for
+  loosening anything. The five early closes not yet past expiration (APP, UBER,
+  AVGO twice, HD) are not in it, and APP is the largest loss on record.
+- It does not price what a held spread costs: its collateral stays tied up and
+  its slot is not free for the next trade, which the agent reused. That favours
+  the exits and is not in the table.
+
+### Gotchas
+
+- `Ledger.log(kind, **payload)` already takes `kind`, so an event payload with a
+  `kind=` key raises `TypeError: got multiple values`. The shadow event uses
+  `exit=`.
+- `resolve(fetch=settle_close)` as a default argument binds the function at
+  definition time and a test cannot swap it. It takes `None` and looks the
+  function up at call time.
+- `close_action` is blank on 13 of the first 23 closed trades. `kind()` falls
+  back to the prefix of `close_reason`; grouping on `close_action` alone puts
+  those 13 in "other" and silently hides the split.
+- **Latent, not fixed:** `paper_broker.mark_positions` settles a real expiry off
+  the spot of the first run AFTER `expiration`, which is that day's live quote
+  or latest bar, not the expiration-day close. A Friday expiry settles on
+  Monday's price. Nothing has ever expired in the record (every position closed
+  early), so it has not fired. Shadow uses the right bar; the real path does not.

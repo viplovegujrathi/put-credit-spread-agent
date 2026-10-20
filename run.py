@@ -7,6 +7,7 @@
     ./run.py reject  P260831-01 --reason "too close to earnings"
     ./run.py mark                   refresh marks, surface management actions
     ./run.py learn                  what the closed record supports, and self-repair
+    ./run.py shadow                 early exits vs holding to expiration
     ./run.py doctor                 why has nothing opened? every gate, in order
     ./run.py status                 account + open positions
     ./run.py close  <position-id>   close a paper position at the current mark
@@ -38,6 +39,7 @@ from pcs import (
     proposer,
     screener,
     session,
+    shadow,
     universe,
     watchlist,
 )
@@ -399,6 +401,7 @@ def cmd_mark(args, settings: Settings) -> int:
 def _mark(args, settings: Settings, led) -> int:
     if not led.open_positions:
         print("no open positions to mark.")
+        _shadow_pass(led)
         for r in _journal_pass(learning.load(), led, settings):
             print(f"  SELF-REPAIR  {r}")
         return 0
@@ -484,6 +487,8 @@ def _mark(args, settings: Settings, led) -> int:
         print("\nWATCHING (no action due):")
         for pos, d in watch:
             print(f"  {pos.symbol} {pos.short_strike:g}/{pos.long_strike:g} [{pos.id}]: {d.reason}")
+    # After the exits, so a stop due this run is never queued behind a download.
+    _shadow_pass(led)
     # Closes taken above are now in the ledger, so ingest after the exits run
     # rather than before -- otherwise every trade lands in the journal a run late.
     for r in _journal_pass(journal, led, settings):
@@ -491,6 +496,26 @@ def _mark(args, settings: Settings, led) -> int:
 
     dashboard.render(led, proposer.load(), settings, sess)
     return 0
+
+
+def _shadow_pass(led, limit: int = shadow.MAX_PER_RUN) -> None:
+    """Settle in shadow any early close whose expiration has passed.
+
+    Never allowed to fail the run: `mark` is the job that takes stops, and this
+    is a research column. Called with the ledger lock held, so the save cannot
+    lose or be lost to another writer.
+    """
+    try:
+        done = shadow.resolve(led, limit=limit)
+        if done:
+            led.save()
+    except Exception as exc:
+        print(f"\n  shadow: skipped ({exc})")
+        return
+    for p in done:
+        print(f"\n  SHADOW  {p.symbol} {p.short_strike:g}/{p.long_strike:g} [{p.id}]: "
+              f"closed {shadow.kind(p)} {_money(p.realized_pl)}; held to {p.expiration} "
+              f"(close {p.shadow_settle_spot:g}) it would have booked {_money(p.shadow_pl)}")
 
 
 def _print_positions(led) -> None:
@@ -555,12 +580,37 @@ def cmd_learn(args, settings: Settings) -> int:
         if lesson.suggestion:
             print(f"  suggested, NOT applied:  {lesson.suggestion}")
 
+    print(f"\n{BAR}\nEARLY EXITS VS HOLDING TO EXPIRATION\n{BAR}")
+    for line in shadow.report_lines(led.positions):
+        print(line)
     print("\nStill not learnable:")
     for g in learning.feature_gaps(journal):
         print(f"  - {g}")
     print("\nNothing above has been applied. Every number stays where it is until "
           "you change it.")
     dashboard.render(led, proposer.load(), settings, session.state_for(settings))
+    return 0
+
+
+def cmd_shadow(args, settings: Settings) -> int:
+    """Early exits against holding every spread to expiration.
+
+    Read-only unless --resolve, which takes the ledger lock and fetches the
+    expiration-day close for any early close that has come due. Nothing here
+    changes a rule or an exit: it measures the two that exist.
+    """
+    if args.resolve:
+        with ledger_mod.locked(settings) as led:
+            _shadow_pass(led, limit=10_000)
+            positions = led.positions
+    else:
+        positions = ledger_mod.Ledger.load(settings).positions
+    print(f"{BAR}\nSHADOW  {dt.datetime.now():%Y-%m-%d %H:%M}\n{BAR}")
+    for line in shadow.report_lines(positions):
+        print(line)
+    print("\nHindsight, one settlement close per trade. A held spread also keeps its "
+          "collateral\ntied up and fills a slot the agent reused, which this does not "
+          "price. Nothing here\nchanges a rule on its own.")
     return 0
 
 
@@ -987,6 +1037,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("learn", help="what the closed record supports; run self-repair")
     p.set_defaults(fn=cmd_learn)
+
+    p = sub.add_parser("shadow", help="early exits vs holding to expiration")
+    p.add_argument("--resolve", action="store_true",
+                   help="fetch the expiration-day close for early closes now due "
+                        "(takes the ledger lock; writes shadow_* fields only)")
+    p.set_defaults(fn=cmd_shadow)
 
     p = sub.add_parser("doctor", help="why has nothing opened? every gate, in order")
     p.set_defaults(fn=cmd_doctor)

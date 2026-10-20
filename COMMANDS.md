@@ -203,6 +203,22 @@ read the findings.
 
 Writes `data/journal.json`. Shown on the dashboard's **Learning** tab.
 
+### `./run.py shadow`
+**Did the exits pay?** Compares what every early close actually booked with what
+that same spread would have booked held to expiration, split by exit kind
+(take-profit, stop, defend, manual). Read-only, offline, instant.
+
+```bash
+./run.py shadow
+./run.py shadow --resolve     # fetch the expiration-day close for any close now due
+```
+
+`--resolve` takes the ledger lock and writes the `shadow_*` fields on closed
+rows and nothing else: no cash, no `realized_pl`, no rule. `mark` does the same
+resolve itself, six positions per run, after the exits for that run, so the
+timers keep it current with no extra timer. A close is only settled once its
+expiration date has passed. Printed under `learn` too.
+
 ### `./run.py doctor`
 **Why has nothing opened?** Walks every gate between "the market is open" and "a
 position exists", in the order they actually bind, and names the first one that

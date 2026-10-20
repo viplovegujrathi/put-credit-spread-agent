@@ -133,6 +133,14 @@ class Position:
     short_delta_at_open: float | None = None       # computed while sizing
     iv_at_open: float | None = None                # short-leg implied vol
 
+    # What holding to expiration would have booked, filled in by `shadow` once
+    # the expiration date has passed. Research only -- no exit rule, cap or
+    # cash figure reads these. None means NOT SETTLED YET, never "held at no
+    # loss": an unsettled row and a $0 hypothetical are different facts.
+    shadow_settle_spot: float | None = None        # underlying's close on expiration
+    shadow_pl: float | None = None                 # dollars, comparable to realized_pl
+    shadow_tried_on: str = ""                      # last day a fetch was attempted
+
     @property
     def max_loss(self) -> float:
         return self.collateral
