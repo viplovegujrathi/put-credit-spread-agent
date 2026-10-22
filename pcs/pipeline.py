@@ -140,12 +140,21 @@ def apply_earnings(sized: list[SizedCandidate], res: ScreenResult,
         screener.apply_earnings_filter([sc.candidate], res.snapshots, expiry, settings)
 
 
-def _earnings_note(c: Candidate, expiry: str) -> tuple[bool, str]:
-    """(blocked, note). Unknown is never treated as a clean pass."""
+def _earnings_note(c: Candidate, expiry: str, blockout: bool = True) -> tuple[bool, str]:
+    """(blocked, note). With the blockout on, unknown is never a clean pass.
+
+    With it off nothing is blocked, but the note still says where the report
+    falls, so the ticket shows the risk the rule used to remove.
+    """
     if c.earnings_in_window is True:
+        if not blockout:
+            return False, (f"reports {c.earnings_date}, inside the {expiry} expiration "
+                           f"window - blockout off ({c.earnings_source})")
         return True, (f"BLOCKED - reports {c.earnings_date}, inside the {expiry} "
                       f"expiration window ({c.earnings_source})")
     if c.earnings_in_window is None:
+        if not blockout:
+            return False, "next earnings date unknown - blockout off"
         return True, ("BLOCKED - next earnings date unknown; the screen cannot confirm "
                       "the report falls outside the window. Verify manually to override.")
     return False, f"clear - next report {c.earnings_date}, after {expiry} ({c.earnings_source})"
@@ -178,7 +187,7 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
     proposals: list[Proposal] = []
     seq = 1
     for sp, c in ranked:
-        blocked, note = _earnings_note(c, sp.expiration)
+        blocked, note = _earnings_note(c, sp.expiration, settings.earnings_blockout)
         if blocked and not allow_unknown_earnings:
             skipped.append(f"{c.symbol}: {note}")
             continue

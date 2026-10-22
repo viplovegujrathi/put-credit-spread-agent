@@ -140,7 +140,7 @@ Screen → size → portfolio risk → tickets, written to `data/proposals.json`
 | `--expiration YYYY-MM-DD` | Force one expiration instead of resolving ~32 DTE |
 | `--contracts N` | Size N lots (default 1). Caps are checked against the total |
 | `--include-tight` | Also size `NEAR_BELOW_TIGHT`. Off by default: not the setup |
-| `--allow-unknown-earnings` | Treat an unknown earnings date as clean. Off by default |
+| `--allow-unknown-earnings` | Treat an unknown earnings date as clean. Only matters when `earnings_blockout` is on, which it is not by default |
 | `--no-auto-open` | Write tickets only, even when approval is off |
 | `--max-cache-age MIN` | Reuse cached price snapshots |
 
@@ -163,7 +163,7 @@ premium you could get.
 | `HOLDING` | Already an open position |
 | `READY` | Clears every rule — the next `propose` run opens it |
 | `BLOCKED` | The trade is fine; a *portfolio* cap is in the way. Still priced, so the cost of the cap is visible |
-| `EARNINGS` | Earnings inside the expiration window (an unknown date counts) |
+| `EARNINGS` | Earnings inside the expiration window (an unknown date counts). Only appears when `earnings_blockout` is on |
 | `NO_FIT` | Screened in, but no strike and width clears the credit floor at a safe cushion |
 | `NEAR` | 0–3% below the 50dma: near the setup, shallow pullback |
 | `STRETCHED` | 8–12% below: drifting toward broken-down |

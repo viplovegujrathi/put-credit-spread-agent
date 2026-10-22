@@ -40,7 +40,7 @@ and covered by tests:
 | Credit per trade | **≥ $100**, **no upper cap** |
 | Short strike | **≥ 5% OTM, short delta ≤ 0.30** — never pulled to the money to hit the number |
 | Expiration | **~32 DTE**, a real listed Friday confirmed against the chain |
-| Earnings inside the window | **excluded** |
+| Earnings inside the window | **not excluded** since 2026-10-22 — shown on the ticket; `earnings_blockout` restores the exclusion |
 | Opening range | **no position opened in the first 30 min** after the bell — paper included |
 | Available balance | **no position opened that the account cannot pay the max loss on** |
 | Take profit | **booked automatically at 50%** of max credit (50–75% band) |
@@ -185,7 +185,7 @@ signal saying where it stands.
 | `HOLDING` | Already open |
 | `READY` | Clears every rule — the next run opens it |
 | `BLOCKED` | The trade is fine; a **portfolio cap** is in the way |
-| `EARNINGS` | Earnings inside the window (unknown counts as inside) |
+| `EARNINGS` | Earnings inside the window (unknown counts as inside). Only appears when `earnings_blockout` is on |
 | `NO_FIT` | Screened in, but nothing clears $100 at a safe cushion |
 | `NEAR` / `STRETCHED` | Near the setup, not in it |
 

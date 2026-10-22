@@ -1,4 +1,4 @@
-"""Earnings exclusion and the Robinhood ingest normalisation."""
+"""Earnings exclusion (when switched on) and the Robinhood ingest normalisation."""
 
 import sys
 from pathlib import Path
@@ -20,19 +20,19 @@ def a_candidate(**kw) -> Candidate:
 
 def test_earnings_inside_the_window_blocks():
     c = a_candidate(earnings_date="2026-09-25", earnings_in_window=True)
-    blocked, note = _earnings_note(c, "2026-10-02")
+    blocked, note = _earnings_note(c, "2026-10-02", blockout=True)
     assert blocked and "inside" in note
 
 
 def test_unknown_earnings_date_is_not_treated_as_a_pass():
     c = a_candidate(earnings_date=None, earnings_in_window=None)
-    blocked, note = _earnings_note(c, "2026-10-02")
+    blocked, note = _earnings_note(c, "2026-10-02", blockout=True)
     assert blocked and "unknown" in note
 
 
 def test_earnings_after_the_window_clears():
     c = a_candidate(earnings_date="2026-11-05", earnings_in_window=False)
-    blocked, note = _earnings_note(c, "2026-10-02")
+    blocked, note = _earnings_note(c, "2026-10-02", blockout=True)
     assert not blocked and "clear" in note
 
 

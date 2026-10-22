@@ -100,11 +100,13 @@ def test_a_portfolio_cap_makes_it_blocked_not_absent(settings, led, live_session
     (False, watchlist.READY),
 ])
 def test_earnings_gate(settings, led, live_session, earnings, expected):
+    settings.earnings_blockout = True
     wl = build(settings, live_session, [a_candidate(earnings=earnings)], led)
     assert wl.entries[0].signal == expected
 
 
 def test_an_unknown_earnings_date_says_so(settings, led, live_session):
+    settings.earnings_blockout = True
     wl = build(settings, live_session, [a_candidate(earnings=None)], led)
     assert "unknown" in wl.entries[0].reason
 

@@ -164,7 +164,7 @@ def build(res, sized: list, led: Ledger, settings: Settings,
         if sc and sc.spreads:
             _from_spread(e, sc.spreads[0], contracts)
             if e.signal == NO_FIT:      # a primary name with a real spread
-                if c.earnings_in_window is not False:
+                if settings.earnings_blockout and c.earnings_in_window is not False:
                     e.signal = EARNINGS
                     e.reason = ("earnings date unknown -- treated as inside the window"
                                 if c.earnings_in_window is None

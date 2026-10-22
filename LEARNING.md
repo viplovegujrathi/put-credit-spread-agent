@@ -2305,3 +2305,53 @@ already read the right bar.
 - Not changed, and not examined: on the expiration day itself a position is
   still marked off the option chain (a 0-DTE chain, where exits can fire), and
   `expiration < today` is evaluated on the box's clock, which is UTC.
+
+---
+
+## 59. The earnings blockout is off
+
+2026-10-22, on the user's instruction. The rule excluded any name whose next
+report fell on or before expiry + 2 days, and counted an unknown date as inside.
+It was applied after sizing (`pipeline.apply_earnings`), so it only ever saw
+names that already had a qualifying spread.
+
+What it was removing, off the box's `propose.log`:
+
+| run | names with a spread | blocked by earnings | left to a ticket |
+|---|---|---|---|
+| 2026-10-19 | 21 | 16 | 5 |
+| 2026-10-20 | 17 | 13 | 4 |
+
+Across the 35 propose runs from 09-01, about 170 of roughly 380 name-days with a
+spread (about 45%). The share is high from mid-October because a 31-32 DTE
+expiry on 11-20 spans nearly the whole Q3 reporting season. An unknown date
+never occurred. The 10-19 and 10-20 tickets that survived were stopped by
+capital (the book was full), not by earnings, so removing the rule widens the
+choice of what to buy with the same cash; it does not by itself add trades.
+
+- **`Settings.earnings_blockout`, default False.** The key is absent from the
+  box's `data/settings.json`, which `Settings.load` reads over the defaults, so
+  the deploy takes effect on the next propose run with no edit on the box.
+  `./run.py config --set earnings_blockout=on` brings the old rule back,
+  `earnings_buffer_days` and `--allow-unknown-earnings` included.
+- Off means: `build_proposals` does not skip the name, and `watchlist.build`
+  does not give it the `EARNINGS` signal, so it reads `READY` or `BLOCKED` on
+  the portfolio caps like any other. The date is still looked up and the ticket
+  still prints it ("reports 2026-11-04, inside the 2026-11-20 expiration window
+  - blockout off"), so the risk is shown rather than hidden. The dashboard's
+  rules sentence follows the setting.
+- **The record cannot say what this does.** All 27 closed trades and every open
+  position were taken under the rule, so none has held an earnings report;
+  nothing here measures it. What can be said without data: a report inside the
+  window is a gap that a 2x-credit stop does not bound (a stop is a decision at
+  the next mark, not a fill at the stop price), and an earnings-inflated IV
+  fattens the credit, which is also what clears the $100 floor and lifts a name
+  in the ranking. Expect these names to be over-represented among new tickets.
+  That is an expectation, not an observation.
+- Fills after this change are a different population. Add a `SELECTION_CHANGES`
+  row (pcs/expectancy.py) in the commit that ships it, dated the first propose
+  run on the new code, so the History tab reports the record since it.
+- Tests: `tests/test_earnings_blockout.py`. The tests of the rule itself
+  (`test_earnings_and_ingest`, the `EARNINGS` cases in `test_watchlist`) now
+  switch it on explicitly.
+

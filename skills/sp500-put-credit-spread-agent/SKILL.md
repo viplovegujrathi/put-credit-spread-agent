@@ -70,9 +70,11 @@ times a year).
   | >12% below | `BROKEN_DOWN` | broken down, *not* "near the average" — excluded (see the 50-day-low variant) |
   | **above** | `ABOVE_50DMA` | recovery/continuation — a **different thesis**. Flag it, never fold it in |
 
-- **No earnings inside the expiration window.** An **unknown** earnings date
-  blocks too — it is not a clean pass. Override only deliberately, with
-  `--allow-unknown-earnings`.
+- **Earnings inside the expiration window: not excluded (since 2026-10-22).**
+  The date is still pulled and printed on every ticket, and the setting
+  `earnings_blockout` brings the old rule back: with it on, a report inside the
+  window blocks, an **unknown** date blocks too (it is not a clean pass), and
+  `--allow-unknown-earnings` is the deliberate override.
 
 ### 3. Expiration
 ~30–35 days out, on an **actual listed Friday** confirmed against the real
@@ -179,8 +181,9 @@ Before presenting results, check:
 
 - [ ] Every proposed spread independently satisfies collateral ≤ $1,000 **and**
       credit ≥ $100.
-- [ ] No candidate has earnings inside the expiration window — and unknown
-      dates were treated as blocking, not passing.
+- [ ] Every ticket shows its next earnings date. (The blockout is off; with
+      `earnings_blockout` on, no candidate has earnings inside the window and
+      unknown dates block rather than pass.)
 - [ ] The 50dma direction check was applied: near-and-below, broken-far-below,
       and above were kept in separate buckets, not blended.
 - [ ] Every credit/collateral figure is labelled live-quoted vs. modeled,

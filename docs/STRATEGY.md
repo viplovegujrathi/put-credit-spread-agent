@@ -19,7 +19,7 @@ A candidate must pass BOTH filters:
    - Price **more than ~10-12% below** its 50dma: this is a broken-down stock, not a "near the average" stock — **exclude it** from this screen (it may still qualify for the separate 50-day-low screen in section 1.6, but the mechanics differ).
    - Price **above** its 50dma: this reads as a recovering / continuation setup rather than a beaten-down bounce play. Flag it explicitly as a different thesis rather than silently including it (see the Disney example below).
 
-3. **No earnings report inside the expiration window.** Pull the next scheduled earnings date for every candidate and exclude (or explicitly flag) any name reporting before the option expires.
+3. **Earnings report inside the expiration window — no longer excluded (2026-10-22).** The next scheduled earnings date is still pulled for every candidate and shown on the ticket. The setting `earnings_blockout` restores the original rule: exclude any name reporting before the option expires, and treat an unknown date as inside the window.
 
 ### 1.3 Structure — Put Credit Spread ONLY
 This agent trades exactly one structure: the **bull put credit spread**.
@@ -113,7 +113,7 @@ These were modeled from each stock's implied volatility, not live quotes — the
 ┌─────────────────────┐
 │ 6. Risk Manager       │  Applies portfolio-level checks (section 1.8):
 │                       │  total collateral cap, sector concentration,
-│                       │  earnings blackout, max open positions.
+│                       │  max open positions (earnings blackout: off).
 └──────────┬───────────┘
            ▼
 ┌─────────────────────┐

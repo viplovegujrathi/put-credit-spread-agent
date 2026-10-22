@@ -37,7 +37,8 @@ can replace the screen without touching anything downstream.
 └────────────┬─────────────┘  ROC breaks ties: the narrowest width at equal odds.
              ▼
      earnings check          Only for names that produced a spread, against
-             │               THAT symbol's expiration. Unknown ⇒ blocked.
+             │               THAT symbol's expiration. Dated, not blocking;
+             │               `earnings_blockout` on ⇒ inside or unknown ⇒ blocked.
              ▼
 ┌─ 6. Risk manager ────────┐  pcs/risk.py
 │  total collateral cap ·  │  Caps bind across the whole batch, not one

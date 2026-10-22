@@ -772,6 +772,10 @@ _CONFIG_GROUPS = (
         ("min_otm_cushion", f"skill: {STRATEGY.min_otm_cushion:.0%} below spot"),
         ("take_profit_pct", f"skill: {STRATEGY.take_profit_pct:.0%} of max credit"),
     )),
+    ("Earnings", (
+        ("earnings_blockout", "ON = skip a name whose report lands inside the window "
+                              "(an unknown date counts); off = trade it, date on the ticket"),
+    )),
     ("Stops", (
         ("stop_loss_credit_multiple", "close when buyback costs this many x the credit"),
         ("stop_loss_pct_of_max_loss", "... or when down this fraction of max loss"),

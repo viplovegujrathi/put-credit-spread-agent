@@ -352,7 +352,12 @@ class Settings:
     min_win_rate_for_live: float = 0.60
 
     # --- earnings ---------------------------------------------------------
-    earnings_buffer_days: int = 2        # exclude if earnings <= expiry + buffer
+    # Off since 2026-10-22: a name reporting inside the window is sized, ranked
+    # and traded like any other, and the date is still looked up and printed on
+    # the ticket. True restores the exclusion, and with it the rule that an
+    # unknown date blocks too.
+    earnings_blockout: bool = False
+    earnings_buffer_days: int = 2        # blockout on: exclude if earnings <= expiry + buffer
 
     # -- fees ---------------------------------------------------------------
     def spread_fees(self, contracts: int = 1) -> float:
