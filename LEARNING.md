@@ -2357,3 +2357,53 @@ choice of what to buy with the same cash; it does not by itself add trades.
   (`test_earnings_and_ingest`, the `EARNINGS` cases in `test_watchlist`) now
   switch it on explicitly.
 
+---
+
+## 60. 10-19 to 10-22: the book was full, and what freed it
+
+Four propose runs, read off the box's `propose.log` and the ledger. Nothing was
+broken: the agent proposed every day and the book could not take what it
+proposed.
+
+| run (10:15 ET) | passed the screen | had a spread | earnings-blocked | tickets | cleared |
+|---|---|---|---|---|---|
+| 10-19 | 89 | 21 | 16 | 5 | 0 |
+| 10-20 | 75 | 17 | 13 | 4 | 0 |
+| 10-21 | 69 | 18 | 13 | 5 | 0 |
+| 10-22 | 60 | 15 | 9 | 6 | 1 (UAL) |
+
+- **Where the names go before a ticket (10-19, the one run counted).** Of the 89,
+  68 had no qualifying spread: 36 on open interest under 25, 25 on a bid/ask too
+  wide, 3 with no bid or offer, 3 under the $100 credit floor, 1 other. Liquidity
+  removes far more than earnings does; earnings only sees names that already had
+  a spread (section 59).
+- **Capital-full, 10-16 to 10-21.** LEN, LULU, ADBE, C and DAL all opened in the
+  10-16 10:16 ET run and held $2,249.87 of collateral and $3,000 of width. That
+  left $150 of headroom under the $2,400 cap and $530.62 of free balance
+  (cash minus width at risk), against tickets that needed $688-$891. On 10-19
+  all five tickets were refused by the cap and the balance (AVGO also by its
+  re-entry cooldown); 10-20 and 10-21 ended 0 clear, every ticket blocked by
+  portfolio limits. Nothing opened or closed on 10-21.
+- **10-22.** DAL was stopped at 09:50 ET (-$99.25; buy-back $198, 2.0x its $99
+  credit), which put free balance at $832.62. Of the six tickets only UAL 95/90
+  fit ($394 of collateral, credit $106, spot $103.54, short delta -0.24, IV
+  51%): MRVL $880, GS $847, LULU $879 (also a third Consumer Discretionary),
+  HPE $999 and JBHT $809 did not, JBHT after UAL filled left $438.75. ADBE was
+  then taken at 12:20 ET at 51% of max credit (+$138.02, six days held).
+- **Why size decided it.** A $10-wide spread needs $800-$900 of balance and a
+  $5-wide one about $400, so the $2,400 cap holds two of the former or six of the
+  latter. The five opened on 10-16 were four $5-wide and
+  one $10-wide. Lowering the $1,000 per-trade cap (to about $500 was suggested)
+  is not decided and is not what filled this book.
+- **Account.** End of 10-20: net liquidation $2,700.26 (-9.99%), realized
+  -$218.91, unrealized -$80.83. At 12:20 ET on 10-22: about $2,843 (-5.2%),
+  realized -$180.14 on 27 closed trades (17 winners), 4 open (LEN, LULU, C, UAL)
+  holding $1,514 of collateral.
+
+**The constituent list is a tracked input.** `data/sp500.csv` is in git and the
+deploy rsync does not exclude it, so `run.py universe --refresh` run on the box
+alone is undone by the next deploy; refresh locally, commit, deploy. Refreshed
+2026-10-22 (it was 52 days old): 503 names, six in (BE, ILMN, P, SKYD, TWLO,
+VYLR), six out (BLDR, CTVA, PSKY, TAP, TTD, WBD), FERG's sub-industry changed,
+no sector changed, no open position affected.
+
