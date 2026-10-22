@@ -9,8 +9,10 @@ somewhere else in the tree:
     permission in a per-trade field. `Settings.auto_approver` states the rule
     ("never a person's name") one method above the branch that ignored it.
   * Expiry settlement fell back to `pos.mark_spot`, a stored price of unknown
-    age, to book max profit or max loss. LEARNING.md 38: every guard on a
-    decision is worth exactly what the measurement under it is worth.
+    age, to book max profit or max loss -- and, once that was gone, used the
+    spot of whichever run first saw the expiry, not the expiration-day close.
+    LEARNING.md 38: every guard on a decision is worth exactly what the
+    measurement under it is worth.
   * The go-live gate proved "a stop has fired" with a substring search over
     free text that `close --reason` writes verbatim. LEARNING.md 24: a machine
     check must not depend on prose.
@@ -108,14 +110,16 @@ def test_validation_does_not_block_the_path_that_generates_the_marker():
     assert s.auto_approver() == "agent (auto-approve, paper)"
 
 
-# --- settlement will not book a number off a stale spot --------------------
-def test_an_expired_position_is_not_settled_without_a_spot_this_run(settings, led):
+# --- settlement will not book a number off the wrong day's price ----------
+def test_an_expired_position_is_not_settled_without_a_close_for_its_date(settings, led):
     """Settlement is max profit or max loss off one comparison, and an expired
     row is never re-priced -- so booking it wrong is permanent. Refusing only
-    delays: it settles on the next run that has a real spot."""
+    delays: it settles on the next run that finds the close. A live spot is on
+    hand here and still does not stand in for it."""
     p = a_position(expiration="2026-09-10", mark_spot=97.0, marked_at=marked(60))
     led.positions = [p]
-    notes, fresh = mark_positions(led, settings, {})
+    notes, fresh = mark_positions(led, settings, {"TST": 99.0},
+                                  settle_price=lambda s, e: None)
     assert p.status == "open"
     assert p.id not in fresh
     assert "could not settle" in notes[0][1]
@@ -126,17 +130,71 @@ def test_it_does_not_fall_back_to_the_stored_mark_spot(settings, led):
     position settled at max profit on a number from before expiration."""
     p = a_position(expiration="2026-09-10", mark_spot=99.0, marked_at=marked(60))
     led.positions = [p]
-    mark_positions(led, settings, {})
+    mark_positions(led, settings, {}, settle_price=lambda s, e: None)
+    assert p.status == "open"
     assert p.realized_pl == 0.0 and p.close_reason == ""
 
 
-def test_a_real_spot_settles_and_records_how(settings, led):
+def test_a_real_close_settles_and_records_how(settings, led):
     p = a_position(expiration="2026-09-10", mark_spot=99.0, marked_at=marked(60))
     led.positions = [p]
-    mark_positions(led, settings, {"TST": 99.0})
+    mark_positions(led, settings, {}, settle_price=lambda s, e: 99.0)
     assert p.status == "expired"
     assert p.close_action == CLOSE_EXPIRED
     assert "max profit" in p.close_reason
+    assert "2026-09-10 close 99.00" in p.close_reason     # the audit trail for the number
+
+
+def test_it_settles_on_the_expiration_day_close_not_this_runs_spot(settings, led):
+    """A Friday expiry is first seen by the Monday run. Monday's price is
+    whatever the stock did over the weekend; the trade ended Friday at the close."""
+    p = a_position(expiration="2026-09-10")
+    led.positions = [p]
+    mark_positions(led, settings, {"TST": 80.0}, settle_price=lambda s, e: 99.0)
+    assert p.realized_pl == pytest.approx(p.credit_dollars)       # max profit, not max loss
+
+    q = a_position(id="p2", expiration="2026-09-10")
+    led.positions = [q]
+    mark_positions(led, settings, {"TST": 99.0}, settle_price=lambda s, e: 85.0)
+    assert q.realized_pl == pytest.approx(q.credit_dollars - q.width * 100)
+
+
+def test_a_close_between_the_strikes_settles_partially_in_the_money(settings, led):
+    p = a_position(expiration="2026-09-10")                      # 95 / 90
+    led.positions = [p]
+    mark_positions(led, settings, {}, settle_price=lambda s, e: 92.0)
+    assert "partially" in p.close_reason
+    assert p.realized_pl == pytest.approx(p.credit_dollars - 3.0 * 100)
+
+
+def test_it_asks_for_the_close_on_the_expiration_date(settings, led):
+    asked = []
+    led.positions = [a_position(expiration="2026-09-10")]
+    mark_positions(led, settings, {}, settle_price=lambda s, e: asked.append((s, e)) or 99.0)
+    assert asked == [("TST", "2026-09-10")]
+
+
+def test_one_lookup_serves_every_row_on_the_same_symbol_and_date(settings, led):
+    asked = []
+    led.positions = [a_position(id="p1", expiration="2026-09-10"),
+                     a_position(id="p2", expiration="2026-09-10")]
+    mark_positions(led, settings, {}, settle_price=lambda s, e: asked.append(s) or 99.0)
+    assert len(asked) == 1
+    assert [p.status for p in led.positions] == ["expired", "expired"]
+
+
+def test_a_failed_lookup_leaves_that_row_open_and_settles_the_rest(settings, led):
+    """The mark run also owns the stops. One symbol's fetch fault must not stop it."""
+    def fetch(symbol, expiration):
+        if symbol == "BAD":
+            raise RuntimeError("yfinance fell over")
+        return 99.0
+    bad = a_position(id="p1", symbol="BAD", expiration="2026-09-10")
+    good = a_position(id="p2", expiration="2026-09-10")
+    led.positions = [bad, good]
+    notes, _ = mark_positions(led, settings, {}, settle_price=fetch)
+    assert bad.status == "open" and good.status == "expired"
+    assert any("could not settle" in n for p, n in notes if p is bad)
 
 
 # --- the go-live gate reads fields, not sentences --------------------------

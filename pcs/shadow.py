@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 from . import exits
 from .ledger import CLOSE_MANUAL, CLOSED, Ledger, Position
-from .paper_broker import settle_expired
+from .paper_broker import settle_close, settle_expired
 
 # Per run, not per position: the first run after this ships has every
 # already-closed trade to back-fill, and `mark` holds the ledger lock while it
@@ -34,37 +34,6 @@ from .paper_broker import settle_expired
 MAX_PER_RUN = 6
 
 Fetch = Callable[[str, str], "float | None"]
-
-
-def settle_close(symbol: str, expiration: str) -> float | None:
-    """The underlying's close on `expiration`, or None if there is not one yet.
-
-    Unadjusted: a settlement price is the print, and a dividend adjustment
-    would move it. None for anything that is not one clean bar for that exact
-    date -- a missing bar, a NaN, an empty frame -- because a settlement booked
-    off the wrong day is worse than a row that stays unresolved.
-    """
-    import pandas as pd
-    import yfinance as yf
-
-    day = dt.date.fromisoformat(expiration)
-    try:
-        h = yf.download(symbol, start=day.isoformat(),
-                        end=(day + dt.timedelta(days=1)).isoformat(),
-                        interval="1d", auto_adjust=False, progress=False)
-    except Exception:
-        return None
-    if h is None or len(h) == 0:
-        return None
-    if isinstance(h.columns, pd.MultiIndex):
-        h.columns = h.columns.get_level_values(0)
-    h = h[[pd.Timestamp(i).date() == day for i in h.index]]
-    if len(h) != 1 or "Close" not in h:
-        return None
-    close = h["Close"].iloc[0]
-    if close != close or float(close) <= 0:         # NaN, or a zero fill
-        return None
-    return float(close)
 
 
 def kind(pos: Position) -> str:

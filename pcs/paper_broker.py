@@ -13,6 +13,7 @@ mid every time.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 
 from . import universe
 from .chains import PutChain, PutQuote, get_chain
@@ -313,6 +314,37 @@ def cost_to_close(chain: PutChain, pos: Position, settings: Settings) -> float |
     return round(min(max(debit, 0.0), pos.width), 4)
 
 
+def settle_close(symbol: str, expiration: str) -> float | None:
+    """The underlying's close on `expiration`, or None if there is not one yet.
+
+    Unadjusted: a settlement price is the print, and a dividend adjustment
+    would move it. None for anything that is not one clean bar for that exact
+    date -- a missing bar, a NaN, an empty frame -- because a settlement booked
+    off the wrong day is worse than a row that stays unresolved.
+    """
+    import pandas as pd
+    import yfinance as yf
+
+    day = dt.date.fromisoformat(expiration)
+    try:
+        h = yf.download(symbol, start=day.isoformat(),
+                        end=(day + dt.timedelta(days=1)).isoformat(),
+                        interval="1d", auto_adjust=False, progress=False)
+    except Exception:
+        return None
+    if h is None or len(h) == 0:
+        return None
+    if isinstance(h.columns, pd.MultiIndex):
+        h.columns = h.columns.get_level_values(0)
+    h = h[[pd.Timestamp(i).date() == day for i in h.index]]
+    if len(h) != 1 or "Close" not in h:
+        return None
+    close = h["Close"].iloc[0]
+    if close != close or float(close) <= 0:         # NaN, or a zero fill
+        return None
+    return float(close)
+
+
 def settle_expired(pos: Position, spot: float) -> tuple[float, str]:
     """Intrinsic settlement at expiration, per share."""
     if spot >= pos.short_strike:
@@ -322,37 +354,54 @@ def settle_expired(pos: Position, spot: float) -> tuple[float, str]:
     return round(pos.short_strike - spot, 4), "expired partially in the money"
 
 
-def mark_positions(ledger: Ledger, settings: Settings, spots: dict[str, float]
+def mark_positions(ledger: Ledger, settings: Settings, spots: dict[str, float],
+                   settle_price: Callable[[str, str], float | None] | None = None
                    ) -> tuple[list[tuple[Position, str]], set[str]]:
     """Refresh every open position's mark.
 
     Returns (notes, fresh) -- `fresh` is the ids that actually re-priced, so an
     exit decision is never taken off a mark that failed to update.
+    `settle_price(symbol, expiration)` is the expiration-day close an expired
+    row settles on; the default fetches it.
     """
     notes: list[tuple[Position, str]] = []
     fresh: set[str] = set()
     today = dt.date.today()
+    settle_price = settle_price or settle_close     # looked up now, so a test can swap it
+    closes: dict[tuple[str, str], float | None] = {}
     for pos in list(ledger.open_positions):
         spot = spots.get(pos.symbol, 0.0)
         if dt.date.fromisoformat(pos.expiration) < today:
             # Settlement books the largest number a row ever carries: for a
             # vertical it is max profit or max loss and nothing in between, off
-            # one comparison against one spot. This used to fall back to
-            # `pos.mark_spot` -- a stored price of unknown age -- which is the
-            # exact shape of the GOOGL loss (LEARNING.md 38): a correct decision
-            # executed on a measurement nobody checked. `cb6e8a1` put that guard
-            # on the option mark; this branch sits above it and went around it.
+            # one comparison against one price. That price is the underlying's
+            # close ON the expiration date. It used to be this run's spot, so a
+            # Friday expiry settled on Monday's price -- whatever the stock did
+            # over the weekend decided a trade that was already over -- and
+            # before that it fell back to `pos.mark_spot`, a stored price of
+            # unknown age, which is the exact shape of the GOOGL loss
+            # (LEARNING.md 38): a correct decision executed on a measurement
+            # nobody checked. `cb6e8a1` put that guard on the option mark; this
+            # branch sat above it and went around it.
             #
             # Refusing is the lenient failure here too. The position stays open,
             # stays out of `fresh`, is reported under "could not decide", and
-            # settles on the next run that has a real spot -- or a human closes
+            # settles on the next run that finds the close -- or a human closes
             # it by hand. Booking it wrong is permanent: an expired row is never
             # re-priced, and nothing downstream ever revisits it.
-            if not spot:
+            key = (pos.symbol, pos.expiration)
+            if key not in closes:
+                try:
+                    closes[key] = settle_price(*key)
+                except Exception:       # a fetch fault must not stop the other marks
+                    closes[key] = None
+            close = closes[key]
+            if not close:
                 notes.append((pos, f"could not settle: expired {pos.expiration} "
-                                   f"and no spot for {pos.symbol} this run"))
+                                   f"and no {pos.symbol} close for that date yet"))
                 continue
-            debit, reason = settle_expired(pos, spot)
+            debit, reason = settle_expired(pos, close)
+            reason = f"{reason} -- {pos.expiration} close {close:.2f}"
             ledger.close_position(pos, debit, reason, fees=0.0, status=EXPIRED,
                                   action=CLOSE_EXPIRED)
             notes.append((pos, reason))

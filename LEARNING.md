@@ -27,7 +27,7 @@ module. Update it in the same commit as the code it describes.
 | `pcs/watchlist.py` | what is tracked and why it has not been taken — **observation only** | anything that opens; it must not import `paper_broker` |
 | `pcs/doctor.py` | every gate that stops a fill, in binding order — the "why has nothing opened?" answer | anything that mutates; it is read-only by construction |
 | `pcs/learning.py` | the journal: closed-trade outcomes, operational faults, symbol quarantines | anything that opens or closes; it never writes `Settings` |
-| `pcs/paper_broker.py` | the three open gates, simulated fills, marking, exit **execution** | exit policy |
+| `pcs/paper_broker.py` | the three open gates, simulated fills, marking, expiry settlement, exit **execution** | exit policy |
 | `pcs/shadow.py` | what each early exit would have booked held to expiration (research columns `shadow_*`) | anything a decision reads; nothing in the exit path may depend on it |
 | `pcs/ledger.py` | cash, positions, append-only events, all account arithmetic | any policy |
 | `pcs/pipeline.py` | wiring: screen → shortlist → size → earnings → propose | new rules |
@@ -2265,8 +2265,43 @@ low of the window in each case.
 - `close_action` is blank on 13 of the first 23 closed trades. `kind()` falls
   back to the prefix of `close_reason`; grouping on `close_action` alone puts
   those 13 in "other" and silently hides the split.
-- **Latent, not fixed:** `paper_broker.mark_positions` settles a real expiry off
-  the spot of the first run AFTER `expiration`, which is that day's live quote
-  or latest bar, not the expiration-day close. A Friday expiry settles on
-  Monday's price. Nothing has ever expired in the record (every position closed
-  early), so it has not fired. Shadow uses the right bar; the real path does not.
+- **Was latent, now fixed (section 58):** `paper_broker.mark_positions` settled a
+  real expiry off the spot of the first run AFTER `expiration`, so a Friday
+  expiry would have settled on Monday's price. Nothing had ever expired in the
+  record (every position closed early), so it never fired.
+
+---
+
+## 58. A real expiry settles on the expiration-day close
+
+`mark_positions` booked an expired spread -- always max profit or max loss, or
+the sliver between the strikes -- off the live spot of whichever mark run first
+saw `expiration < today`. For the book that opened on 2026-10-16 every position
+expires Friday 2026-11-20, so the first such run is Monday 11-23 and the weekend
+decides a trade that ended Friday at 16:00. Nothing had ever expired (all 27
+closes to date were early exits), so the bug had never booked a wrong number;
+it was found while building the shadow-mark (section 57), whose own settlement
+already read the right bar.
+
+- `settle_close(symbol, expiration)` moved from `pcs/shadow.py` into
+  `pcs/paper_broker.py` (shadow imports it back) so the real path and the
+  research path settle off one function: the unadjusted close of that exact
+  date, or None.
+- `mark_positions(..., settle_price=None)` takes the lookup as a parameter; None
+  means `settle_close`, resolved at call time so a test can swap it. Its `spots`
+  argument is no longer read for an expired row.
+- No close for the date means the row stays open, out of `fresh`, reported as
+  "could not settle", and is retried on the next run. A lookup that raises is
+  treated the same way, so one symbol's fault cannot stop the other marks or
+  the stops. One lookup serves every row on the same symbol and date.
+- The close that settled the row is written into `close_reason`
+  (`... -- 2026-11-20 close 105.30`), so the number behind a permanent booking
+  can be read off the row.
+- Tests in `tests/test_record_integrity.py`: a live spot does not stand in for a
+  missing close; the Monday spot loses to the Friday close in both directions;
+  a close between the strikes books the partial; the lookup is asked for the
+  expiration date; one lookup per symbol and date; a raising lookup leaves that
+  row open and settles the rest.
+- Not changed, and not examined: on the expiration day itself a position is
+  still marked off the option chain (a 0-DTE chain, where exits can fire), and
+  `expiration < today` is evaluated on the box's clock, which is UTC.
