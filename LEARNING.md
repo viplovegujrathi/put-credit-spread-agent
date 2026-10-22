@@ -2348,9 +2348,11 @@ choice of what to buy with the same cash; it does not by itself add trades.
   fattens the credit, which is also what clears the $100 floor and lifts a name
   in the ranking. Expect these names to be over-represented among new tickets.
   That is an expectation, not an observation.
-- Fills after this change are a different population. Add a `SELECTION_CHANGES`
-  row (pcs/expectancy.py) in the commit that ships it, dated the first propose
-  run on the new code, so the History tab reports the record since it.
+- Fills after this change are a different population.
+  `expectancy.SELECTION_CHANGES` has the row `("2026-10-23", "e5a774e", ...)`,
+  dated Friday, the first propose run on the new code, so the History tab's
+  since-the-change record starts there and every position opened before it
+  stays out of it.
 - Tests: `tests/test_earnings_blockout.py`. The tests of the rule itself
   (`test_earnings_and_ingest`, the `EARNINGS` cases in `test_watchlist`) now
   switch it on explicitly.

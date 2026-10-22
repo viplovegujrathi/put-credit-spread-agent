@@ -55,6 +55,9 @@ SELECTION_CHANGES: tuple[tuple[str, str, str], ...] = (
     ("2026-10-19", "d488761",
      "the short strike sits at least 5% below spot with a short delta of 0.30 or "
      "less, and spreads are ranked by chance of profit before return"),
+    ("2026-10-23", "e5a774e",
+     "a name reporting inside the expiration window is no longer excluded, and "
+     "an unknown report date no longer blocks"),
 )
 
 
