@@ -2394,7 +2394,7 @@ proposed.
   $5-wide one about $400, so the $2,400 cap holds two of the former or six of the
   latter. The five opened on 10-16 were four $5-wide and
   one $10-wide. Lowering the $1,000 per-trade cap (to about $500 was suggested)
-  is not decided and is not what filled this book.
+  is not what filled this book, and section 61 withdraws the suggestion.
 - **Account.** End of 10-20: net liquidation $2,700.26 (-9.99%), realized
   -$218.91, unrealized -$80.83. At 12:20 ET on 10-22: about $2,843 (-5.2%),
   realized -$180.14 on 27 closed trades (17 winners), 4 open (LEN, LULU, C, UAL)
@@ -2406,4 +2406,105 @@ alone is undone by the next deploy; refresh locally, commit, deploy. Refreshed
 2026-10-22 (it was 52 days old): 503 names, six in (BE, ILMN, P, SKYD, TWLO,
 VYLR), six out (BLDR, CTVA, PSKY, TAP, TTD, WBD), FERG's sub-industry changed,
 no sector changed, no open position affected.
+
+---
+
+## 61. Ten losses in 28 trades: what 56 gets wrong now, and what to do about it
+
+2026-10-23. Read from a copy of the box's ledger, not from `./run.py learn`
+(which runs self-repair and writes the journal). Nothing was written on the box.
+This extends 56; it does not repeat it.
+
+**The record, closed trades only.** 28 closed, 18 wins and 10 losses, realised
+-$101.63 (gross wins +$2,223.60, average $123.53; gross losses -$2,325.23,
+average -$232.52). Every win is a take-profit and every loss a stop; nothing has
+expired. Break-even is 65.3%, the record is 64.3%, Wilson 95% 46-79%. Three are
+open (LULU, C, UAL). Against 56 (23 closed, break-even 68.3%, record 65.2%,
+-$182.55) the five trades since went 3 wins, 2 losses, +$80.92: HD +$90.75,
+LEN +$78.51, ADBE +$138.02, ORCL -$127.11, DAL -$99.25. The book is still at
+break-even, a fraction of a trade short, and the interval still spans a
+working edge and none.
+
+**Splits.** Delta and IV are recorded on 21 of the 28 closed trades (the first
+seven predate the fields); the collateral, width and cushion rows cover all 28.
+About fifteen cuts have now been looked at across 56 and this section, so one or
+two would look interesting by chance.
+
+| split | in | out |
+|---|---|---|
+| short delta 0.30 or less (21) | 4/5, +$263 | 9/16, -$638 |
+| IV at open 55%+ (21) | 2/5, -$827 | 11/16, +$452 |
+| collateral $700+ | 3/5, -$574 | 15/23, +$472 |
+| collateral $500-700 | 6/7, +$863 | 12/21, -$965 |
+| width 10 | 9/11, +$955 | 9/17, -$1,057 |
+| width 5 | 7/13, -$367 | 11/15, +$265 |
+| cushion at open 5%+ | 5/7, -$184 | 13/21, +$82 |
+
+Delta, by Fisher on the pooled 21, is p = 0.61 (0.25 on the 16 of 56): it
+weakened as trades were added. Medians for the 13 winners and 8 losers that
+carry the fields, winners first: distance off the 52-week high 27.2% against
+29.9%, distance from the 50dma -4.9% against -5.4%, cushion 4.0% against 3.7%.
+None separates them. Return on collateral is 38.9% against 45.6%: the losers
+were the richer credits, which is what a higher credit costs.
+
+**What the losses have in common is size and structure, not an entry signal.**
+
+- Five losses of $200 or more (APP, STX, RDDT, GOOGL, AVGO) are $1,636 of the
+  $2,325, 70%. APP alone is $666: the only 15-wide trade, 59% IV.
+- Seven of the eight losers with a recorded delta were above 0.30 (STX .38,
+  ORCL .38, CLX .34, AVGO .33, APP .33, RDDT .33, BA .32). The 4 of 5 at 0.30 or
+  less is the pattern `d488761` acts on.
+- Four of ten stopped within 3 days of the fill, and no exit rule fixes a gap.
+- RDDT was stopped twice, the second entry 6 days after the first stop, one day
+  past the 5-day cooldown.
+
+**The farther-strike rule has barely been tested.** `d488761` was committed on
+Sunday 10-18 and its first propose run was Monday 10-19. The five positions
+opened on 10-16 (LEN, LULU, ADBE, C, DAL) pre-date it and have deltas of
+.27-.34. Exactly one position has opened under the rule: UAL 95/90 on 10-22
+(delta -.24, 8.2% cushion), still open. A tally of "trades since the rule" that
+counts the 10-16 book is wrong; count by `opened_at` against the
+`SELECTION_CHANGES` date.
+
+It is also not an independent test of the rule. The rule was chosen after the
+losses were read, the same way the 5.5% pullback cut was (56), so the pooled
+4/5 against 9/16 is the evidence that suggested it, not a confirmation. The
+only out-of-sample trades since 56 are mixed: delta 0.30 or less went 1 win
+(HD) and 1 loss (DAL), above 0.30 went 2 wins (LEN, ADBE) and 1 loss (ORCL).
+`e5a774e` (the earnings blockout coming off) added a `SELECTION_CHANGES` row
+dated 10-23, so the History tab's since-the-change record starts there and
+holds none of the farther-strike trades yet.
+
+**A $500 per-trade cap would have made the record worse.** It was floated as a
+way to remove APP-sized losses and is withdrawn. Of the 28, the 16 trades with
+collateral of $500 or less made -$390 against -$102 for all 28, because the
+$500-700 band was 6 wins in 7 and +$863. Width 10 (9 of 11, +$955) did better
+than width 5 (7 of 13, -$367), the opposite of what a "narrower is safer"
+reading expects, so a cap that favours width 5 selects the weaker group. Only a
+cap near $700 would have bitten (five trades, -$574, mostly APP), and that is
+one trade chosen in hindsight.
+
+**The exits are not shown to be the problem.** 57's first reading holds the 18
+early closes to expiry at +$290 over what was booked, but the held book contains
+four max losses totalling -$1,926. That is no case for loosening the stop or
+the take-profit.
+
+**Decision: no parameter changes on this evidence.** Keep the farther-strike
+rule and add no filter. Judge the rule once about 20 trades have opened under
+it; at the record's pace of about one trade every two days that is around the
+start of December, and only if the earnings change does not muddy the sample
+(it will, since both are in force from 10-23; the History tab cannot separate
+them). Until then a split that looks good on ten losses is a hypothesis to
+watch, not a rule.
+
+### Gotchas from the analysis
+
+- `pct_off_high_at_open` and `pct_from_dma50_at_open` are fractions, and
+  `iv_at_open` is a fraction too (0.59 = 59%). `short_delta_at_open` is
+  negative for a short put; compare its absolute value to .30.
+- `short_delta_at_open` and `iv_at_open` are None on the seven earliest trades.
+  A split that leaves them out is over 21 trades, not 28.
+- Count trades "under a change" by `opened_at >= the SELECTION_CHANGES date`.
+  Counting from the commit date or from memory puts the 10-16 book on the wrong
+  side of `d488761`.
 
