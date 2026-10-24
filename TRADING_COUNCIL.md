@@ -62,9 +62,11 @@ the Chair to attach a grade first.
    says how the strategy behaves in a different market.
 5. **Rule changes split the record.** Count trades under a rule by
    `opened_at >= the change date`, using `SELECTION_CHANGES` in
-   `pcs/expectancy.py`. The two live rows are 2026-10-19 (`d488761`, farther
-   strike and POP-first ranking) and 2026-10-23 (`e5a774e`, earnings no longer
-   excluded). From 10-23 both apply, so they cannot be told apart afterwards.
+   `pcs/expectancy.py`. The three live rows are 2026-10-19 (`d488761`, farther
+   strike and POP-first ranking), 2026-10-23 (`e5a774e`, earnings no longer
+   excluded) and 2026-10-26 (`4538794`, the expiry fallback). From 10-26 all
+   three apply, so they cannot be told apart afterwards, except that the
+   fallback's trades are identifiable from `propose.log`.
 6. **Pre-register the test before the data arrives.** §8 says what is looked at,
    when, and what would change the council's mind.
 

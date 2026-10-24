@@ -58,6 +58,10 @@ SELECTION_CHANGES: tuple[tuple[str, str, str], ...] = (
     ("2026-10-23", "e5a774e",
      "a name reporting inside the expiration window is no longer excluded, and "
      "an unknown report date no longer blocks"),
+    ("2026-10-26", "4538794",
+     "a name with quotes but no spread on its nearest expiration is tried on up "
+     "to two other expirations inside the same 28-38 day window before it is "
+     "skipped"),
 )
 
 
