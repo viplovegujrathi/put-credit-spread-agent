@@ -2491,8 +2491,9 @@ the take-profit.
 
 **Decision: no parameter changes on this evidence.** Keep the farther-strike
 rule and add no filter. Judge the rule once about 20 trades have opened under
-it; at the record's pace of about one trade every two days that is around the
-start of December, and only if the earnings change does not muddy the sample
+it; at the pace since the rule (two trades in five sittings) that is between
+late December and early January, not the start of December (see 62), and only
+if the earnings change does not muddy the sample
 (it will, since both are in force from 10-23; the History tab cannot separate
 them). Until then a split that looks good on ten losses is a hypothesis to
 watch, not a rule.
@@ -2508,3 +2509,82 @@ watch, not a rule.
   Counting from the commit date or from memory puts the 10-16 book on the wrong
   side of `d488761`.
 
+
+---
+
+## 62. The trading council's first sitting: the skipped names are mostly an expiry artifact
+
+`TRADING_COUNCIL.md` holds the charter, the evidence grades, every table and the
+per-trade list. This section keeps the facts a later session should not have to
+rediscover. Sitting 1 was 2026-10-23 at `0e3dc4c`. Paper account, analysis only.
+
+**Why names are skipped.** 3,145 skip lines in 39 live sittings, first matching
+reason: open interest under 25 on a leg 46.7%, no listed expiration in the 28-38
+day window 32.3%, wide or missing bid/ask 12.7%, earnings blockout (since
+removed) 6.0%, everything else 2.3%. 343 names reached a shortlist and only 76
+ever produced a ticket. `chains.pick_expiration` picks the expiry nearest 32
+days with no regard for liquidity, and sizing never falls back to another one.
+Sittings whose target was a third-Friday monthly turned 24.3% of the shortlist
+into a spread (206 of 846, 10 sittings); the others 8.6% (217 of 2,532, 28
+sittings). Re-sizing the 10-23 shortlist on the 11-20 monthly gave 20 names
+against 7 on the 11-27 weekly the agent used; 13 qualified only on the monthly.
+
+**The skipped spreads show no edge.** 109 spreads that were sized and have since
+settled (expiries to 10-16), held to expiry at the sizing mid credit: 69.7% won,
+mean -$12.6 a trade, -$67.6 at the natural credit. Break-even was 74.8%. The
+printed POP averaged 70.3%, so it was calibrated. The 18 the agent opened won
+66.7% at -$11.7; the 91 it skipped won 70.3% at -$12.8. More volume is not an
+aim; filter quality is.
+
+**Capital is the limit.** 182 of 233 tickets (78%) were blocked by the $2,400
+cap or the balance floor. Median open positions at a sitting is 4; the 8-position
+cap never binds. On 10-23 AMD left $359 under the cap, so seven tickets could not
+open, MRVL among them (it was also $12 short on balance).
+
+**What `d488761` did to the tickets** (before / since, one per name per day):
+collateral $640 / $840, share $10-wide 65% / 89%, credit $210 / $130, return on
+collateral 35% / 16%, cushion 4.9% / 11.9%, IV 40% / 49%, POP 70% / 83%. POP sat
+below break-even before (70% against 75%) and still does (83% against 86%), so
+the rule did not create that gap. POP-first ranking tilts toward high-IV names,
+which did worst in the old record.
+
+**Stops.** Six of the 10 stops fired at the 09:35 or 09:50 ET mark, 7.7% of mark
+runs. Two of them (GOOGL, DAL) fired with the stock within 0.5% of entry; GOOGL
+would have finished +$116 against the -$209 booked. On the 18 settled closes,
+removing stops would add $428 and no take-profit level beat 50%, but four stops
+(APP, ORCL, AVGO, DAL) have no hold value yet and APP is the largest loss, so
+this is a hypothesis. They settle 10-30, 10-30, 11-13 and 11-20; re-run the
+replay then.
+
+**Fills.** Mean paper fill $209 of credit, mean mid $216, mean natural $163; the
+median fill is 88% of the way from natural to mid. At the natural, entry credit
+alone is about $46 a trade lower, roughly $1,300 over the 28 closed trades
+against -$102 realised. Paper P&L is an upper bound on a live result.
+
+**One trade carries the loss.** APP's stop was -$666, 29% of all loss dollars;
+without it the other 27 closed trades are +$565.
+
+**Timing correction to 61.** Twenty trades under `d488761` is between late
+December and early January at the pace since the rule, not the start of
+December, which counted calendar days. Ten trades is around the end of November.
+
+**State at the 15:50 ET mark on 2026-10-23.** 28 closed (18 wins, 10 losses),
+realised -$101.63; open LULU, C, UAL and AMD at -$7, -$79, -$75 and -$3; net
+liquidation $2,734.53. AMD (415/405, opened 10-23) is the first position opened
+under both the farther-strike and the earnings changes.
+
+**Decision: no parameter changes.** The council proposed a liquidity-aware
+fallback for expiry selection and a natural-fill column in the expectancy
+report; neither is built.
+
+### Gotchas from the analysis
+
+- The logs are `/opt/pcs/logs/propose.log` and `mark.log`; the ledger and
+  proposals are in `/opt/pcs/data/`. The OPEN table in `mark.log` drops a
+  position on the run that closes it, so append the ledger's close debit as the
+  last point of a replay. With that the replay of the real rule gave -$100.71
+  against the ledger's -$101.63.
+- A proposal's `pop` is a column, not a pandas method: `df["pop"]`, never
+  `df.pop`.
+- Skip-reason text can carry several reasons at once; classify by a fixed
+  priority order and say so, or the shares will not add to 100%.
