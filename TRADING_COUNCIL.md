@@ -322,12 +322,12 @@ treats share classes as one issuer).
 
 ## 5. Recommendations
 
-Ordered by how much the evidence supports acting. R1 is built and ships off
+Ordered by how much the evidence supports acting. R1 is built and on by default
 (`expiry_fallback`); nothing else is applied.
 
 | # | Proposal | Grade | Why | What it costs |
 |---|---|---|---|---|
-| **R1** | **Make expiry selection liquidity-aware.** Keep `pick_expiration` as the first choice. If the sized chain yields quotes but no spread, try the other expirations inside 28–38, nearest the target first, at most two, before skipping the name. No entry rule changes. **Built 2026-10-23 as `Settings.expiry_fallback`, off by default.** | **B** (mechanism); the *value* of the extra names is C | The 1,866 skip lines that are open interest or quotes (59% of all skips) are what it can reach, and only on sittings whose window holds two Fridays: 32 of 39, holding 83% of those lines. On 10-23 the monthly qualified 20 names against 7. It does **not** reach the 32% that list nothing in the window; that needs a wider `dte_window`, which is a strategy decision | Up to two more chain fetches per name that fails; turning it on is a selection change and needs its own row in `SELECTION_CHANGES` |
+| **R1** | **Make expiry selection liquidity-aware.** Keep `pick_expiration` as the first choice. If the sized chain yields quotes but no spread, try the other expirations inside 28–38, nearest the target first, at most two, before skipping the name. No entry rule changes. **Built 2026-10-23 as `Settings.expiry_fallback`; on by default from the first sitting after it was deployed with that default.** | **B** (mechanism); the *value* of the extra names is C | The 1,866 skip lines that are open interest or quotes (59% of all skips) are what it can reach, and only on sittings whose window holds two Fridays: 32 of 39, holding 83% of those lines. On 10-23 the monthly qualified 20 names against 7. It does **not** reach the 32% that list nothing in the window; that needs a wider `dte_window`, which is a strategy decision | Up to two more chain fetches per name that fails; it is a selection change, so it has its own row in `SELECTION_CHANGES` and restarts the History tab's since-change panel |
 | **R2** | **Do nothing on stops yet. Wait for the four unknowns.** APP and ORCL expire 10-30, AVGO 11-13 and DAL 11-20. The existing `shadow_pl` fills them in; no new code. Re-run the replay on all ten stops then. | **C** | The "no stop before 10:00" gain is two trades, and the four unresolved stops include the biggest loss | Nothing |
 | **R3** | **Pre-register the judgement on `d488761`.** First look at 10 trades opened on or after 2026-10-19; judge at 20. Watch IV, the stop rate, and credit capture against the record above. Stage a *shadow* filter (IV at or below about 50%, or a capital-aware ranking) that is logged and not applied. | **C** | The ranking now favours the group that did worst in the old record | Nothing until the review date |
 | **R4** | **Leave the cap and the credit floor alone for now.** If the owner wants more positions, the cap, the $100 floor and the width trade against each other, and changing any of them while `d488761` is under test confounds it. | **C** | $850 spreads leave room for two or three | A decision for the owner; no seat has a view |
@@ -338,7 +338,7 @@ Ordered by how much the evidence supports acting. R1 is built and ships off
 
 - R1 loses its value if the extra names qualify on thin monthlies and then fill
   worse than the existing ones. Check fills against mid on names added by R1.
-  It is built and off (`expiry_fallback`), and it reaches only the open
+  It is built and on by default (`expiry_fallback`), and it reaches only the open
   interest and quote-quality skips on days when the window holds two Fridays.
   The names that list nothing inside 28-38 days stay out of reach until
   `dte_window` changes, which is a strategy decision and not a setting.
@@ -435,6 +435,12 @@ six days it could be 0.5. At those rates ten trades is around the end of
 November and twenty is between the third week of December and the start of
 January. `LEARNING.md` §61 put twenty at "around the start of December", which
 counted calendar days; this is the later date.
+
+Trades opened from the first sitting under `expiry_fallback` come from two
+changes at once: the farther strike and the choice of a second expiry. The
+two checkpoints on 10-19 above still count them, but a reading of them has to
+say which trades sat on an expiry the fallback chose (the `expiry fallback on:`
+lines in `propose.log`) and compare the two groups before crediting either rule.
 
 **Steps.**
 

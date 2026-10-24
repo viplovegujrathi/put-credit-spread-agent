@@ -5,8 +5,8 @@ never looked further, so a weekly that was the closest listing but had no open
 interest cost the name even when the monthly a week away would have qualified.
 Of 3,145 skip lines in 39 sittings, 1,866 were open interest or quotes; on
 2026-10-23 the 11-27 weekly produced a spread for 7 names and the 11-20 monthly
-for 20. The fallback is off unless `expiry_fallback` is set, and it never looks
-outside the DTE window. See TRADING_COUNCIL.md R1 and LEARNING.md 63.
+for 20. The fallback is on unless `expiry_fallback` is turned off, and it never
+looks outside the DTE window. See TRADING_COUNCIL.md R1 and LEARNING.md 63.
 """
 import datetime as dt
 import types
@@ -133,8 +133,8 @@ def test_the_yfinance_chain_remembers_everything_it_listed(monkeypatch):
 
 
 # --- the setting ------------------------------------------------------------
-def test_it_ships_off(settings):
-    assert settings.expiry_fallback is False
+def test_it_is_on_by_default(settings):
+    assert settings.expiry_fallback is True
 
 
 def test_it_is_settable_from_the_command_line():
@@ -146,6 +146,7 @@ def test_it_is_settable_from_the_command_line():
 
 # --- sizing -----------------------------------------------------------------
 def test_off_a_thin_nearest_expiration_costs_the_name(settings, live_session, served):
+    settings.expiry_fallback = False
     served.first = _thin(E1, [E1, E2])
     served.by_exp = {E2: _good(E2, [E1, E2])}
     sc = _size(settings, live_session)

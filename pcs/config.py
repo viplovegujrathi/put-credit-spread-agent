@@ -248,15 +248,17 @@ class Settings:
     history_period: str = "1y"
 
     # --- expiration -------------------------------------------------------
-    # Off (shipped): a name is sized on the one expiration nearest the DTE
-    # target, and skipped if that chain has quotes but no spread. A weekly that
-    # is the closest listing but has no open interest then costs the name even
-    # when the monthly a week away would have qualified (2026-10-23: 7 names on
-    # the 11-27 weekly, 20 on the 11-20 monthly). On: such a name is tried on
-    # the other expirations inside the same DTE window, best first, at most
-    # `chains.FALLBACK_TRIES` of them. Nothing outside the window is ever
-    # considered, and no sizing rule changes. See TRADING_COUNCIL.md R1.
-    expiry_fallback: bool = False
+    # Off: a name is sized on the one expiration nearest the DTE target, and
+    # skipped if that chain has quotes but no spread. A weekly that is the
+    # closest listing but has no open interest then costs the name even when
+    # the monthly a week away would have qualified (2026-10-23: 7 names on the
+    # 11-27 weekly, 20 on the 11-20 monthly). On (the default): such a name is
+    # tried on the other expirations inside the same DTE window, best first, at
+    # most `chains.FALLBACK_TRIES` of them. Nothing outside the window is ever
+    # considered, and no sizing rule changes. Changing this default changes
+    # which trades are taken: it needs a row in `expectancy.SELECTION_CHANGES`.
+    # See TRADING_COUNCIL.md R1.
+    expiry_fallback: bool = True
 
     # --- liquidity gates (doc 1.1: reject untradeable chains) -------------
     # A vertical trades as a package, so the package market is the gate that

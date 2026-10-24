@@ -39,7 +39,7 @@ and covered by tests:
 | Collateral (max loss) per trade | **≤ $1,000** |
 | Credit per trade | **≥ $100**, **no upper cap** |
 | Short strike | **≥ 5% OTM, short delta ≤ 0.30** — never pulled to the money to hit the number |
-| Expiration | **~32 DTE**, a real listed Friday confirmed against the chain. `expiry_fallback` (off) lets a name with no spread on that expiry try the others inside 28-38 days |
+| Expiration | **~32 DTE**, a real listed Friday confirmed against the chain. `expiry_fallback` (on) lets a name with no spread on that expiry try the others inside 28-38 days |
 | Earnings inside the window | **not excluded** since 2026-10-22 — shown on the ticket; `earnings_blockout` restores the exclusion |
 | Opening range | **no position opened in the first 30 min** after the bell — paper included |
 | Available balance | **no position opened that the account cannot pay the max loss on** |

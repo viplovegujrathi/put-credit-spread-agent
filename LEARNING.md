@@ -2591,11 +2591,12 @@ default (63); the second is not.
   priority order and say so, or the shares will not add to 100%.
 
 
-## 63. The expiry fallback: built, off by default, narrower than the council first said
+## 63. The expiry fallback: built, on by default, narrower than the council first said
 
-`Settings.expiry_fallback` (default `False`) is council recommendation R1. It was
-built on 2026-10-23 on branch `claude/expiry-fallback`; the commit and the box
-state are not recorded here, so check `git log` and `run.py config` for both.
+`Settings.expiry_fallback` is council recommendation R1. It was built on
+2026-10-23 with default `False` (`e9830a9`) and the default was then changed to
+`True`. The box's code and setting are not recorded here: `git log` and
+`run.py config` on the box show them.
 
 **What it does.** `size_candidates` sizes a name on the one expiry
 `pick_expiration` chose. With the setting on, a name whose chain loaded but
@@ -2622,15 +2623,34 @@ are out of reach: they need a wider `dte_window`, and that is a skill-fixed
 strategy value, not a setting.
 
 **Cost.** Up to two more chain fetches per name that fails, not parallelized.
-Rough estimate, not measured: 80-160 extra seconds on a two-Friday day.
+`pcs-watch` (hourly, round the clock, a 30-minute timeout, about 55 seconds a
+run on the box) and `propose` both call `size_candidates`, so both pay it.
+Measured once, from a laptop on Friday 2026-10-23 after the close, on the watch
+shortlist of 82 names: fallback off 12 s and 82 fetches, 12 names with a spread;
+on 16 s and 116 fetches, 23 names with a spread, 11 of them moved from the
+11-27 weekly to the 11-20 monthly, and 23 names still skipped after trying both
+alternates. The earlier guess of 80-160 extra seconds was about twenty times
+too high. One run on one evening, not a distribution: look at `pcs-watch`
+wall time (`journalctl -u pcs-watch`) after the first deploy with it on.
 
-**Turning it on is a selection change.** It changes which trades are taken, so
-the commit that makes it the default needs a `SELECTION_CHANGES` row (dated the
-first sitting under it) and an edit to the latest-row assertion in
-`tests/test_since_change.py`. Setting it with `run.py config --set
-expiry_fallback=on` on the box is the same change in effect and the History tab
-would not know about it. Keys absent from the box's `settings.json` take the
-code default, so a default flip reaches the box without editing that file.
+**Changing the default is a selection change.** It changes which trades are
+taken, so the change has a `SELECTION_CHANGES` row (dated the first sitting
+under it, as `e5a774e`'s was) and the latest-row assertion in
+`tests/test_since_change.py` follows it. The row is added in a follow-up commit
+that names the change's commit, since a commit cannot name itself. Setting it
+with `run.py config --set expiry_fallback=on|off` on the box is the same change
+in effect, and the History tab would not know about it. Keys absent from the
+box's `settings.json` take the code default, so a default flip reaches the box
+without editing that file; `expiry_fallback` was absent from it on 2026-10-24.
+
+**What the new row does to the record.** The History tab's since-change panel
+counts positions opened on or after the latest row's day, so a new row restarts
+it from zero. The farther-strike sample (`d488761`, the 10- and 20-trade
+checkpoints in `TRADING_COUNCIL.md` 8) is counted from 2026-10-19 by hand, not
+from that panel, and from the first sitting under the fallback its trades come
+from two changes at once. A trade that opened on a monthly the fallback
+reached is identifiable by its expiration and by the `expiry fallback on:` line
+in `propose.log`.
 
 Checks to run once it is on: fills on the names it adds against their mid, and
 whether the names it adds stop out more or less than the rest. Neither is

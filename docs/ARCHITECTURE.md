@@ -27,7 +27,7 @@ can replace the screen without touching anything downstream.
 │  real bid/ask/OI/IV at   │  yfinance | robinhood snapshot | modeled (tagged).
 │  ~32 DTE, per symbol     │  Expiration read off the LIVE chain, per symbol —
 │                          │  not every S&P name lists weeklies.
-│                          │  expiry_fallback (off): quotes but no spread -> the
+│                          │  expiry_fallback (on): quotes but no spread -> the
 │                          │  next in-window expiration, at most two more.
 └────────────┬─────────────┘  Session grades quotes live/closing/stale.
              ▼
