@@ -25,7 +25,11 @@ def _on(days: int) -> str:
     return (TODAY + dt.timedelta(days=days)).isoformat()
 
 
-E1, E2, E3, OUTSIDE = _on(31), _on(34), _on(36), _on(45)
+# Three expirations inside the window, named in the order the selector prefers
+# them. Which of +31/+34/+36 days is best depends on the weekday, because a
+# Friday beats a nearer non-Friday, so the order is asked for, not assumed.
+E1, E2, E3 = chains.rank_expirations([_on(31), _on(34), _on(36)])
+OUTSIDE = _on(45)
 
 
 def _candidate(symbol="TST"):
