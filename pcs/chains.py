@@ -19,7 +19,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import yfinance as yf
@@ -77,6 +77,10 @@ class PutChain:
     fetched_at: str
     basis: str = "live"          # "live" | "modeled"
     error: str | None = None
+    # Every expiration the provider listed for the name, not only this one.
+    # Empty when the provider does not say. It is how sizing finds a second
+    # expiration to try without asking the provider a second time.
+    listed: list[str] = field(default_factory=list)
 
     @property
     def dte(self) -> int:
@@ -95,13 +99,13 @@ class PutChain:
 # ---------------------------------------------------------------------------
 # expiration selection
 # ---------------------------------------------------------------------------
-def pick_expiration(available: list[str], today: dt.date | None = None,
-                    target_dte: int | None = None,
-                    window: tuple[int, int] | None = None) -> str | None:
-    """Nearest listed expiration to the DTE target, preferring Fridays.
+def rank_expirations(available: list[str], today: dt.date | None = None,
+                     target_dte: int | None = None,
+                     window: tuple[int, int] | None = None) -> list[str]:
+    """Every listed expiration inside the DTE window, nearest the target first.
 
-    `available` must come from the live chain -- that is the whole point of
-    section 1.5's "confirm the exact date against the live chain".
+    A non-Friday listed expiration costs 3 days of score. `pick_expiration` is
+    the head of this list, so the two can never disagree about the first choice.
     """
     today = today or dt.date.today()
     target = target_dte or STRATEGY.target_dte
@@ -115,12 +119,40 @@ def pick_expiration(available: list[str], today: dt.date | None = None,
         dte = (d - today).days
         if not (lo <= dte <= hi):
             continue
-        # Friday preferred; a non-Friday listed expiration costs 3 days of score.
         penalty = 0 if d.weekday() == 4 else 3
         scored.append((abs(dte - target) + penalty, iso))
-    if not scored:
-        return None
-    return min(scored)[1]
+    return [iso for _, iso in sorted(scored)]
+
+
+def pick_expiration(available: list[str], today: dt.date | None = None,
+                    target_dte: int | None = None,
+                    window: tuple[int, int] | None = None) -> str | None:
+    """Nearest listed expiration to the DTE target, preferring Fridays.
+
+    `available` must come from the live chain -- that is the whole point of
+    section 1.5's "confirm the exact date against the live chain".
+    """
+    ranked = rank_expirations(available, today, target_dte, window)
+    return ranked[0] if ranked else None
+
+
+# At most this many other expirations are tried for a name whose first choice
+# had quotes but no spread. The window is 11 days wide, so it holds two Fridays
+# at most; the cap is there so a chain with odd listings cannot multiply the
+# number of network calls a run makes.
+FALLBACK_TRIES = 2
+
+
+def alternate_expirations(chain: PutChain, today: dt.date | None = None,
+                          target_dte: int | None = None) -> list[str]:
+    """The other in-window expirations the provider listed, best first.
+
+    Empty when the provider did not say what it lists (Robinhood snapshots and
+    the model are keyed by an explicit expiration), so only yfinance chains
+    ever have somewhere else to go.
+    """
+    ranked = rank_expirations(chain.listed, today, target_dte)
+    return [e for e in ranked if e != chain.expiration][:FALLBACK_TRIES]
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +189,7 @@ def fetch_yfinance(symbol: str, expiration: str | None = None,
             )
             for r in raw.to_dict("records")
         ]
-        return PutChain(symbol, exp, spot, puts, "yfinance", now)
+        return PutChain(symbol, exp, spot, puts, "yfinance", now, listed=exps)
     except Exception as exc:
         return PutChain(symbol, expiration or "", 0.0, [], "yfinance", now, error=str(exc))
 

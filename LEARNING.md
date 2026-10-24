@@ -18,7 +18,7 @@ module. Update it in the same commit as the code it describes.
 | `pcs/config.py` | `STRATEGY` (frozen, skill-fixed, asserted at import) and `Settings` (user-settable, persisted to `data/settings.json`) | anything derived at runtime |
 | `pcs/universe.py` | S&P 500 constituents + GICS sectors, Wikipedia with a CSV fallback | price data |
 | `pcs/marketdata.py` | bulk price history, 50dma / 52w-high, snapshot cache | option chains |
-| `pcs/chains.py` | `PutQuote` / `PutChain`, three providers (yfinance / robinhood / model), `pick_expiration` | sizing rules |
+| `pcs/chains.py` | `PutQuote` / `PutChain`, three providers (yfinance / robinhood / model), `pick_expiration`, `rank_expirations`, `alternate_expirations` | sizing rules |
 | `pcs/screener.py` | the 50dma buckets and the earnings tri-state | anything about options |
 | `pcs/optimizer.py` | per-trade sizing: the `(short, long)` search, all §1.4 caps | portfolio-level caps |
 | `pcs/risk.py` | portfolio caps across a batch, incl. the balance floor | per-trade caps |
@@ -2575,7 +2575,8 @@ under both the farther-strike and the earnings changes.
 
 **Decision: no parameter changes.** The council proposed a liquidity-aware
 fallback for expiry selection and a natural-fill column in the expectancy
-report; neither is built.
+report; neither was built at the sitting. The first is built since, off by
+default (63); the second is not.
 
 ### Gotchas from the analysis
 
@@ -2588,3 +2589,49 @@ report; neither is built.
   `df.pop`.
 - Skip-reason text can carry several reasons at once; classify by a fixed
   priority order and say so, or the shares will not add to 100%.
+
+
+## 63. The expiry fallback: built, off by default, narrower than the council first said
+
+`Settings.expiry_fallback` (default `False`) is council recommendation R1. It was
+built on 2026-10-23 on branch `claude/expiry-fallback`; the commit and the box
+state are not recorded here, so check `git log` and `run.py config` for both.
+
+**What it does.** `size_candidates` sizes a name on the one expiry
+`pick_expiration` chose. With the setting on, a name whose chain loaded but
+produced no spread is tried on the other expirations inside the same 28-38 day
+window, best first (`chains.rank_expirations`, Friday before non-Friday), at
+most `chains.FALLBACK_TRIES` = 2, stopping at the first that yields a spread.
+`pick_expiration` is now the head of `rank_expirations`, so the first choice is
+unchanged. `PutChain.listed` carries every expiry yfinance returned, so no extra
+call is needed to learn the alternatives. No sizing rule changes.
+
+**What it never does.** It does not look outside the window. It does not run
+when the first chain failed to load (a data fault), when the caller named an
+expiration with `--expiration`, or on Robinhood or modeled chains, which have
+empty `listed`. A name that still fails says `(also tried X, Y)` on its skip
+line. `run.py propose` prints `expiry fallback on: N name(s) sized on another
+expiration in the window` and one indented line per name, only when the setting
+is on.
+
+**Reach is narrower than the council's table implied.** It can only help the
+open-interest and quote-quality skips, 1,866 of 3,145 skip lines (59%). Of
+those, 1,551 (83%) fall in the 32 of 39 sittings whose window held two Fridays,
+which is 4 of 5 weekdays. The 32% of skips that list nothing inside 28-38 days
+are out of reach: they need a wider `dte_window`, and that is a skill-fixed
+strategy value, not a setting.
+
+**Cost.** Up to two more chain fetches per name that fails, not parallelized.
+Rough estimate, not measured: 80-160 extra seconds on a two-Friday day.
+
+**Turning it on is a selection change.** It changes which trades are taken, so
+the commit that makes it the default needs a `SELECTION_CHANGES` row (dated the
+first sitting under it) and an edit to the latest-row assertion in
+`tests/test_since_change.py`. Setting it with `run.py config --set
+expiry_fallback=on` on the box is the same change in effect and the History tab
+would not know about it. Keys absent from the box's `settings.json` take the
+code default, so a default flip reaches the box without editing that file.
+
+Checks to run once it is on: fills on the names it adds against their mid, and
+whether the names it adds stop out more or less than the rest. Neither is
+known; the value of the extra names is a hypothesis.

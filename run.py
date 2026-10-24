@@ -169,6 +169,12 @@ def cmd_propose(args, settings: Settings) -> int:
     sized = pipeline.size_candidates(cands, res, settings, expiration=args.expiration)
     n_live = sum(1 for sc in sized if sc.spreads)
     print(f"  {n_live}/{len(sized)} name(s) produced a qualifying spread")
+    if settings.expiry_fallback:
+        moved = pipeline.fallback_lines(sized)
+        print(f"  expiry fallback on: {len(moved)} name(s) sized on another expiration "
+              f"in the window")
+        for line in moved:
+            print(f"    {line}")
     print("  checking the earnings calendar for those...")
     pipeline.apply_earnings(sized, res, settings)
     props, skipped = pipeline.build_proposals(
@@ -771,6 +777,10 @@ _CONFIG_GROUPS = (
         ("max_credit_per_trade", "skill: no cap"),
         ("min_otm_cushion", f"skill: {STRATEGY.min_otm_cushion:.0%} below spot"),
         ("take_profit_pct", f"skill: {STRATEGY.take_profit_pct:.0%} of max credit"),
+    )),
+    ("Expiration", (
+        ("expiry_fallback", "ON = a name with no spread on its nearest expiration is "
+                            "tried on the others inside the same DTE window"),
     )),
     ("Earnings", (
         ("earnings_blockout", "ON = skip a name whose report lands inside the window "

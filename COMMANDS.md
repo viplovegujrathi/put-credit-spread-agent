@@ -305,6 +305,7 @@ Sets and persists to `data/settings.json`. Repeatable.
 | `take_profit_pct` | strategy's 50% | Where profit is booked. The 50–75% band it sits in is not settable per account |
 | `stop_loss_credit_multiple` | `2.0` | Stop when buyback costs this × the credit |
 | `stop_loss_pct_of_max_loss` | `0.50` | ... or when down this fraction of max loss |
+| `expiry_fallback` | `off` | `on` = a name with quotes but no spread on its nearest expiration is tried on up to two others inside the same 28-38 day window before it is skipped. Costs up to two more chain fetches per failing name. Turning it on changes which trades are taken |
 | `max_total_collateral` | `2400` | Across the whole book |
 | `max_open_positions` | `10` | Also editable on the dashboard |
 | `max_positions_per_sector` | `2` | |

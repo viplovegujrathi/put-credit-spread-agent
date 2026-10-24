@@ -108,6 +108,11 @@ class SizedCandidate:
     spreads: list[Spread]
     rejects: dict[str, int]
     chain_error: str | None = None
+    # Set when `expiry_fallback` found the spread on another expiration: the
+    # nearest one, which had none.
+    fell_back_from: str | None = None
+    # Other expirations tried after the first choice and found without a spread.
+    also_tried: list[str] = field(default_factory=list)
 
 
 def size_candidates(cands: list[Candidate], res: ScreenResult, settings: Settings,
@@ -122,8 +127,47 @@ def size_candidates(cands: list[Candidate], res: ScreenResult, settings: Setting
             continue
         sps, rej = optimizer.build_spreads(ch, c.spot, settings, res.session,
                                            settings.strategy())
-        out.append(SizedCandidate(c, optimizer.best_per_symbol(sps, keep=3), rej, ch.error))
+        sc = SizedCandidate(c, optimizer.best_per_symbol(sps, keep=3), rej, ch.error)
+        # An expiration the caller named is their choice and is not second-guessed.
+        if not sc.spreads and settings.expiry_fallback and exp is None:
+            sc = _try_other_expirations(sc, ch, res, settings)
+        out.append(sc)
     return out
+
+
+def _try_other_expirations(first: SizedCandidate, ch: chains.PutChain, res: ScreenResult,
+                           settings: Settings) -> SizedCandidate:
+    """Size a name on the other expirations in its window, best first.
+
+    Reached only when the nearest expiration returned quotes and no spread, so a
+    name whose chain failed to load is not retried here: that is a data fault,
+    and the self-repair bench counts it as one. The strategy is unchanged -- the
+    same caps, the same ranking -- and only expirations inside the DTE window
+    are ever offered. The first one that yields a spread wins.
+    """
+    c = first.candidate
+    strategy = settings.strategy()
+    tried: list[str] = []
+    for alt in chains.alternate_expirations(ch, target_dte=strategy.target_dte):
+        alt_ch = chains.get_chain(c.symbol, settings.chain_source, expiration=alt,
+                                  target_dte=strategy.target_dte, spot=c.spot)
+        if alt_ch.puts:
+            sps, rej = optimizer.build_spreads(alt_ch, c.spot, settings, res.session,
+                                               strategy)
+            best = optimizer.best_per_symbol(sps, keep=3)
+            if best:
+                return SizedCandidate(c, best, rej, alt_ch.error,
+                                      fell_back_from=ch.expiration, also_tried=tried)
+        tried.append(alt)
+    first.also_tried = tried
+    return first
+
+
+def fallback_lines(sized: list[SizedCandidate]) -> list[str]:
+    """One line per name that was sized on another expiration, for the run log."""
+    return [f"{sc.candidate.symbol} {sc.spreads[0].expiration} "
+            f"({sc.fell_back_from} had no spread)"
+            for sc in sized if sc.fell_back_from and sc.spreads]
 
 
 def apply_earnings(sized: list[SizedCandidate], res: ScreenResult,
@@ -171,7 +215,8 @@ def build_proposals(sized: list[SizedCandidate], res: ScreenResult, ledger: Ledg
         if not sc.spreads:
             top = sorted(sc.rejects.items(), key=lambda kv: -kv[1])[:2]
             why = "; ".join(f"{k}" for k, _ in top) or (sc.chain_error or "no qualifying spread")
-            skipped.append(f"{c.symbol}: no width/strike combination qualified - {why}")
+            tried = f" (also tried {', '.join(sc.also_tried)})" if sc.also_tried else ""
+            skipped.append(f"{c.symbol}: no width/strike combination qualified - {why}{tried}")
             continue
         ranked.append((sc.spreads[0], c))
     ranked.sort(key=lambda t: optimizer.rank_key(t[0]))
