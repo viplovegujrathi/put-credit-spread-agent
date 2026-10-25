@@ -2578,6 +2578,10 @@ fallback for expiry selection and a natural-fill column in the expectancy
 report; neither was built at the sitting. The first is built since, off by
 default (63); the second is not.
 
+**Corrected by the second sitting (64):** the "mid" credit above is the ticket's
+sizing credit, the 74.8% break-even is the max-loss form, the "$1,300" is the
+all-32 mean applied to 28 trades, and at the true mid the pool is break-even.
+
 ### Gotchas from the analysis
 
 - The logs are `/opt/pcs/logs/propose.log` and `mark.log`; the ledger and
@@ -2655,3 +2659,57 @@ in `propose.log`.
 Checks to run once it is on: fills on the names it adds against their mid, and
 whether the names it adds stop out more or less than the rest. Neither is
 known; the value of the extra names is a hypothesis.
+
+
+## 64. The second sitting audited the agent itself: nothing it printed was invented, the council's own "mid" was wrong
+
+`TRADING_COUNCIL.md` 9 has the tables and the grades. This keeps the facts. Sitting
+2 was 2026-10-25 at `5f20f9b`, a read-only audit of the box's ledger and logs
+against Yahoo bars and plain arithmetic. Paper account.
+
+**The agent has no language model.** Everything it prints is a template with
+numbers filled in by code, so the failure modes are a wrong number or a wrong
+source, never an invented fact. Checked and reproduced: cash two ways
+($3,357.15), geometry of all 32 positions, `realized_pl` of all 28 closed
+(-$101.63), every number in all 28 close-reason sentences, the recorded % off
+high and % from 50dma and short delta, the 18 expiry-day closes and hold values,
+and the arithmetic and prose numbers of all 241 tickets.
+
+**Ticket field to remember.** The printed `credit $N (package BID/ASK, natural
+$N)` is the **sizing credit**, not the mid. The true mid is
+`(package bid + ask) / 2`, the ticket JSON's `credit_mid`. A parser that reads
+`credit` as the mid understates it by about $9 a trade (mean $215.5 against
+$224.9). Sitting 1's parser did, which is why its pool read negative.
+
+**Corrected pool figures** (109 settled spreads, held to expiry): at the true mid,
+win 70.6%, mean -$0.8, break-even 70.7%, 95% interval -$80 to +$87 resampling 13
+sittings; at the sizing credit 69.7%, -$12.6, break-even 71.4%; at the natural
+68.8%, -$67.6, break-even 78.0%. 74.8% was the max-loss form of break-even
+(mean of (width - credit) / width), not the realized-payoff one. The $1,300
+fill gap is $1,400 over the 28 closed. "No edge shown" and "more volume is not an
+aim" stand; "negative at mid" does not.
+
+**POP.** Calibrated in aggregate (printed 70.3%, realized 70.6%), not by bin:
+62.9 -> 62.5% won, 68.6 -> 80.4%, 74.2 -> 63.2%, 83.5 -> 50.0% (n = 4). Grade C.
+
+**Earnings dates from `yfinance.calendar` are projections and are printed as
+fact.** Of 9 claims that could be resolved, 3 were off by more than 3 days (UNH
+14, META 7, TXN 6). UNH tickets on 09-11, 09-14 and 09-15 said `clear -- next
+report 2026-10-27`; the report was 10-13, inside the 10-16 expiry. UNH was never
+opened. `earnings_dates` was exact every time. None of the 32 positions was held
+through a report. Proposal: label calendar dates as estimates (R6 in the council
+doc); not built.
+
+**Counts to carry.** The 39 "live sittings" are 38 trading days plus the Labor Day
+run on 09-07, which printed "Market closed (holiday)" and opened and closed
+nothing. 241 tickets in 35 sittings across 76 names. Marks ran 26 a day on 38
+days. Skips on open interest reproduce on live chains: KKR, CRH, DECK and IP had
+no put with open interest of 25 or more 3-20% below spot.
+
+**Gotchas.** A test built from "today + N days" depends on the weekday through
+the Friday preference; sweep it over consecutive days before trusting it. The
+ledger is read with `ssh pcs 'sudo -n -u pcs cat /opt/pcs/data/ledger.json'`, not
+with `./run.py learn`.
+
+**Not checked.** The quotes the agent saw at each fill (no historical option
+chains), Yahoo's own prices and IV, and the dashboard's rendering.

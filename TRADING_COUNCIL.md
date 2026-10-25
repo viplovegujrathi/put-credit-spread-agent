@@ -7,6 +7,7 @@ the software (design, operator, trust and safety). This one reviews the
 **trades**.
 
 **Sitting 1 · 2026-10-23, after the close · reviewed at `0e3dc4c`.**
+**Sitting 2 · 2026-10-25 · an audit of the agent's own output (§9) · reviewed at `5f20f9b`.**
 
 Everything here is analysis of a **paper** account. It is not investment advice,
 and it changes nothing by itself: every recommendation below is a proposal that
@@ -99,7 +100,8 @@ the journal.
 - *Pool.* Every unique `(symbol, expiry, short, long)` the optimizer sized into
   a ticket, first sighting kept, marked "opened" if any sitting opened it.
   **109** have an expiry on or before 10-22 and so have settled.
-- *Hold value.* Dollars at the expiry-day close: sizing mid credit minus the
+- *Hold value.* (The "mid" here and in §4 is the ticket's sizing credit; see
+  §9.1.) Dollars at the expiry-day close: sizing mid credit minus the
   intrinsic value of the spread, capped at the width. "At natural" uses the
   natural credit instead.
 - *Exit replay.* Walk each closed position's recorded live marks in order and
@@ -192,6 +194,9 @@ At the natural credit the pool's mean is **−$67.6** a trade.
 - **The break-even win rate for these spreads is 74.8% at mid.** The pool won
   69.7%. The tickets' own printed POP averaged **70.3%**, so it was calibrated:
   the market's price of risk was about right and no premium over it shows.
+  *(Corrected in §9.1: the "mid" here is the ticket's sizing credit, the 74.8%
+  is a max-loss form, and at the true mid the pool is break-even, not negative.
+  The conclusion that more volume is not an aim stands.)*
 - **What the agent skipped was no better than what it took.** Splitting the
   skips by why they were blocked gives groups of 1 to 44 spreads with means from
   −$712 to +$364. None of that is readable and it is not used.
@@ -302,6 +307,10 @@ If live fills had landed at the natural, entry credit alone would have been
 **$46 lower a trade**, about $1,300 across the 28 closed trades against a
 realized result of −$102. The paper P&L is an upper bound on a live result. How
 far below is unknown: there is no live fill data.
+
+*(Corrected in §9.1: the "mid" above is the sizing credit, and the $1,300 is the
+mean over all 32 applied to 28 trades; over the 28 closed it is about $1,400.
+The direction and the conclusion are unchanged.)*
 
 ### 4.8 Where the money went, by sector (grade D, shown so it is not re-derived)
 
@@ -426,6 +435,7 @@ gave up part of the credit by design: MRVL took $229 of a possible $416.
 
 | When | Look at | Decides |
 |---|---|---|
+| After the 10-26 propose (14:15 UTC) | `propose` and `pcs-watch` wall time with the fallback on (`journalctl -u pcs-watch`); the `expiry fallback on:` lines. Measured only once, off the box, with one Friday in the window. | cost of R1 |
 | After 10-30 and 11-13 | APP, ORCL and AVGO now have hold values. Re-run the exit replay. | R2 |
 | After 11-20 | DAL has a hold value. First real-expiry settlements. Every position has a hold value or is open. | R2; the settlement fix |
 | At 10 trades opened on or after 10-19 | Stop rate, credit capture, IV against the record. First look only. | R3 |
@@ -453,10 +463,135 @@ lines in `propose.log`) and compare the two groups before crediting either rule.
    a dollar or two before reading any variant.
 4. Re-grade every finding in §4 and §5. A finding that was C and has not
    gained a sample stays C.
-5. Append the sitting as the next numbered section after this one (§9, then
-   §10), with its date and the commit reviewed. Do not rewrite an earlier
+5. Append the sitting as the next numbered section after the last one (§10
+   next), with its date and the commit reviewed. Do not rewrite an earlier
    sitting's findings; record that they changed and why.
 
-**Before sitting 2:** promote the scratchpad scripts into `tools/council/` with
-tests (the log parsers, the pool builder, the replay), so steps 2 and 3 are one
-command.
+**Before the next sitting:** promote the scratchpad scripts into
+`tools/council/` with tests (the log parsers, the pool builder, the replay, and
+the sitting-2 audit checks in §9.2), so steps 2 and 3 are one command. Sitting 2
+did not do this.
+
+---
+
+## 9. Sitting 2 · 2026-10-25 · is the agent making things up?
+
+**Reviewed at `5f20f9b`.** The owner asked the council to make sure the agent is
+not hallucinating. This sitting is an audit of the agent's own output, not a
+review of its trades. Method: pull the box's ledger, `propose.log`, `mark.log`,
+`health.json` and `watchlist.json` (read-only, §3), then rebuild every figure the
+agent prints from sources that do not pass through the agent's code: Yahoo daily
+bars (unadjusted) for prices and expiry closes, Black-Scholes from the recorded
+IV for deltas, and plain arithmetic for everything else. As in sitting 1, one
+analyst held all the seats; this is a recomputation, not independent review.
+
+**The answer, grade A.** The agent contains **no language model**. Every sentence
+it prints is a template with numbers filled in by code, so it cannot invent a
+fact the way a chat model does. The failures that are possible are a wrong number
+or a wrong source. Both were hunted. No printed number failed to reproduce from
+its raw data, and one source (earnings dates, 9.3) is less reliable than its
+wording suggests. The council's own sitting-1 write-up, not the agent, held the
+errors found (9.1).
+
+### 9.1 Corrections to sitting 1
+
+Found by rebuilding the pool and the fill table from scratch. The rule in §8
+applies: sitting 1 is not rewritten; §4.3 and §4.7 carry a pointer here.
+
+| Sitting 1 said | What is true | Why it matters |
+|---|---|---|
+| "Mid credit" in the pool and fill tables | The parser read the ticket's `credit $N`, which is the **sizing credit** (it sits between the natural and the mid). The true mid is `(package bid + ask) / 2`, the ticket JSON's `credit_mid`. Mean sizing credit $215.5; mean true mid $224.9. | Every "at mid" figure was at a lower credit than the mid. |
+| The pool was negative at mid (−$12.6 a trade) | At the true mid the pool is **break-even**: win 70.6%, mean **−$0.8** a trade, 95% interval −$80 to +$87 (resampling whole sittings, 13 of them). At the sizing credit it is −$12.6; at the natural, −$67.6. | Between a mid fill and a natural fill, expectancy moves by about **$67 a trade**. In this sample the fill moved the result far more than the choice of spreads did: opened and skipped groups differed by about $1 a trade. |
+| Break-even win rate 74.8% | 74.8% is the **max-loss form**, the mean of (width − credit) / width at the sizing credit (73.4% at the true mid, 81.1% at the natural). The break-even against realized payoffs is lower: **71.4%** at the sizing credit, **70.7%** at the true mid (average win $223, average loss $540), 78.0% at the natural. | The pool's 69.7% to 70.6% win rate sits at the break-even, not 5 points under it. |
+| "$46 a trade, about $1,300 across the 28 closed" | $46.6 is the mean over all 32; applied to 28 trades it is wrong. Over the 28 closed it is $50.0, **about $1,400**. | Small. Direction unchanged. |
+| The median fill was 88% of the way from natural to mid | Right against the sizing credit. Against the true mid it is **75%**. | Paper fills are still far better than the natural, but less close to the mid than stated. |
+
+**What survives.** The record (28 closed, 18 wins and 10 losses, −$101.63,
+average win $124 and loss $233, APP −$666 at 29% of loss dollars, +$565 without
+it, net liquidation $2,734.53), the pool size and the 69.7% sizing-credit win
+rate, and the conclusions: no edge is shown, **more volume is not an aim**, and
+paper P&L is an upper bound on live. **What does not survive** is "the pool is
+negative at mid". It is break-even there.
+
+### 9.2 What was checked and held (grade A)
+
+| Check | Scope | Result |
+|---|---|---|
+| Cash rebuilt from positions, and separately from the event log | 32 positions | $3,357.15 both ways |
+| Every position opened once; closed ones closed once; log in time order | 32 | pass |
+| Geometry: width, collateral = width × 100 − credit, credit < width, expiry after open | 32 | pass |
+| `realized_pl` = credit − (close debit × 100 × contracts + close fee) | 28 closed | pass; total −$101.63 |
+| Every number in the close-reason sentence (dollars, multiples, percentages, "days of gamma" = DTE at close) | 28 | pass (18 take-profit, 8 credit-multiple stops, 2 max-loss backstop stops) |
+| Recorded % off the 52-week high and % from the 50-day average against a recomputation | 25 recorded, 7 earlier rows recomputed | within 1 point; all 32 were at least 15% off the high and 3% to 8% below the 50-day |
+| Recorded short delta against Black-Scholes from the recorded IV | 25 | within 0.03 |
+| Trades since the 10-19 rule have cushion ≥ 5% and delta ≤ 0.30 | UAL, AMD | pass (AMD: 19.7%, delta 0.11) |
+| Recorded expiry-day close against Yahoo; `shadow_pl` = credit − intrinsic × 100 | 18 settled | all match |
+| Ticket arithmetic: width, collateral, return on collateral, cushion, breakeven, DTE, natural ≤ credit ≤ mid | 241 tickets, 35 sittings, 76 names | pass, allowing for the whole-dollar rounding of the printout |
+| Numbers inside each ticket's prose rationale equal the structured numbers beside it | 241 | pass |
+| "% off high" and "% below 50-day" in the ticket text against history | 241 | within 1.5 points; every ticket met the premise |
+| Run coverage: `health.json` (159 mark, 235 watch, 6 propose runs), `watchlist.json` (118 names) | rolling window | all runs ok; the count matches the health line |
+| Marks on every weekday with an open position | 38 trading days | 26 a day (22 on 09-01) |
+
+Three things first looked wrong and were not: the stop on BA printed "2.0x" for
+2.047 (one-decimal rounding); the return-on-collateral flags came from a
+tolerance tighter than the printout's whole-dollar precision; and the **39 live
+sittings** of §3 are 38 trading days plus the **Labor Day run on 09-07**, which
+printed "Market closed (holiday)", marked on prior-close quotes and opened and
+closed nothing. Sitting 1's tally of 233 tickets against the 241 parsed here was
+not run down; the checks above ran on all 241.
+
+**Skip reasons, spot-checked on live chains (grade A for what was looked at).**
+On 10-25 the first expiry in the window (11-27) was fetched for six names the
+10-23 sitting skipped on open interest. KKR, CRH, DECK and IP had **no put with
+open interest of 25 or more** between 3% and 20% below spot; ECHO had one; LULU
+had six of 17, none of them certain to sit where the optimizer looks. The skip
+text is true of the chains it names. Open interest moves daily and the market was
+closed, so bid-ask widths could not be re-checked.
+
+### 9.3 What did not hold up: projected earnings dates (B for the mechanism, C for the rate)
+
+A ticket says `earnings  clear` or `next report YYYY-MM-DD`. For many names the
+date comes from `yfinance.calendar`, which is a **projection** and is printed
+without saying so. Against Yahoo's later record of the actual report date, 9
+claims could be resolved: 5 exact, 6 within 3 days, and **3 off by more than 3
+days** (UNH by 14, META by 7, TXN by 6). The `earnings_dates` series was exact
+every time it could be resolved.
+
+The worst case: tickets for **UNH on 09-11, 09-14 and 09-15** (expiry 10-16) said
+`clear -- next report 2026-10-27`. The report was 10-13, inside the window. UNH
+was never opened, so no money was involved. Since the earnings blockout was
+removed (`e5a774e`) the line is only information for the owner, and **none of the
+32 positions was held through a report**. But it is the one printed claim that
+can be wrong, and it reads as fact.
+
+### 9.4 POP is calibrated in aggregate and not by bin (grade C)
+
+Across the settled pool the mean printed POP was 70.3% and the realized win rate
+70.6%. Split by printed POP: 62.9% → 62.5% won, 68.6% → 80.4%, 74.2% → 63.2%,
+83.5% → 50.0% (four spreads in the last bin). A higher printed POP did not mean a
+higher win rate in this sample. This fits the sitting-1 concern that POP-first
+ranking tilts toward high-IV names; it is a small, single-window pattern and
+nothing changes on it.
+
+### 9.5 Recommendations
+
+Sitting 1's list (§5) stands; the fallback (R1) is built and on. New:
+
+| | Proposal | Grade | Note |
+|---|---|---|---|
+| **R6** | Mark an earnings date from `yfinance.calendar` as an estimate on the ticket, or cross-check it against `earnings_dates` and print the disagreement. | B | Display only; changes no selection. |
+| **R5, sharper** | Record the natural and the true mid on the position at open, so fill quality is read from the ledger and not re-parsed from logs. | B | Sitting 1's R5 asked for a natural-fill column; this audit is why the mid must be the true one. |
+
+The audit scripts are in a session scratchpad again, not in the repo. Promoting
+them with the sitting-1 scripts to `tools/council/` is still the first thing to
+do before the next sitting. The ticket parser must read `credit_mid`, never the
+printed `credit`.
+
+### 9.6 What this audit could not do
+
+- It cannot re-fetch the option quotes the agent saw at each fill, so a recorded
+  fill or mark is checked for internal consistency, not against the market.
+- It trusts Yahoo for prices and IV. A wrong Yahoo number would pass both sides.
+- It did not compare the dashboard's rendering with the ledger.
+- Only UAL and AMD were opened under the farther-strike rule. Both are open, so
+  nothing here tests that rule.
